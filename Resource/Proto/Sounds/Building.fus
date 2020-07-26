@@ -1,0 +1,64 @@
+
+--Impact Structure SFX
+T.Sfx[Sfx.ImpactStructure+0]="Sound/impact/structure/structure_01.wav"
+T.Sfx[Sfx.ImpactStructure+1]="Sound/impact/structure/structure_02.wav"
+T.Sfx[Sfx.ImpactStructure+2]="Sound/impact/structure/structure_03.wav"
+T.Sfx[Sfx.ImpactStructure+3]="Sound/impact/structure/structure_04.wav"
+T.Sfx[Sfx.ImpactStructure+4]="Sound/impact/structure/structure_05.wav"
+--[[ Removed References to missing files + changed T.Sfx[Sfx.ImpactStructure+9]="Sound/impact/structure/structure_00.wav" to structure_10.wav
+T.Sfx[Sfx.ImpactStructure+5]="Sound/impact/structure/structure_06.wav"
+T.Sfx[Sfx.ImpactStructure+6]="Sound/impact/structure/structure_07.wav"
+T.Sfx[Sfx.ImpactStructure+7]="Sound/impact/structure/structure_08.wav"
+T.Sfx[Sfx.ImpactStructure+8]="Sound/impact/structure/structure_09.wav"
+T.Sfx[Sfx.ImpactStructure+9]="Sound/impact/structure/structure_10.wav"
+T.Sfx[Sfx.ImpactStructure+10]="Sound/impact/structure/structure_11.wav"
+T.Sfx[Sfx.ImpactStructure+11]="Sound/impact/structure/structure_12.wav"
+T.Sfx[Sfx.ImpactStructure+12]="Sound/impact/structure/structure_13.wav"
+T.Sfx[Sfx.ImpactStructure+13]="Sound/impact/structure/structure_14.wav"
+T.Sfx[Sfx.ImpactStructure+14]="Sound/impact/structure/structure_15.wav"
+T.Sfx[Sfx.ImpactStructure+15]="Sound/impact/structure/structure_16.wav"
+T.Sfx[Sfx.ImpactStructure+16]="Sound/impact/structure/structure_17.wav"
+T.Sfx[Sfx.ImpactStructure+17]="Sound/impact/structure/structure_18.wav"
+T.Sfx[Sfx.ImpactStructure+18]="Sound/impact/structure/structure_19.wav"
+T.Sfx[Sfx.ImpactStructure+19]="Sound/impact/structure/structure_20.wav"
+--]]
+
+--Impact Wall SFX
+-- Fix: T.Sfx[Sfx.ImpactWall+9]="Sound/impact/wall/wall_00.wav" --> wall_10.wav
+T.Sfx[Sfx.ImpactWall+0]="Sound/impact/wall/wall_01.wav"
+T.Sfx[Sfx.ImpactWall+1]="Sound/impact/wall/wall_02.wav"
+T.Sfx[Sfx.ImpactWall+2]="Sound/impact/wall/wall_03.wav"
+T.Sfx[Sfx.ImpactWall+3]="Sound/impact/wall/wall_04.wav"
+T.Sfx[Sfx.ImpactWall+4]="Sound/impact/wall/wall_05.wav"
+T.Sfx[Sfx.ImpactWall+5]="Sound/impact/wall/wall_06.wav"
+T.Sfx[Sfx.ImpactWall+6]="Sound/impact/wall/wall_07.wav"
+T.Sfx[Sfx.ImpactWall+7]="Sound/impact/wall/wall_08.wav"
+T.Sfx[Sfx.ImpactWall+8]="Sound/impact/wall/wall_09.wav"
+T.Sfx[Sfx.ImpactWall+9]="Sound/impact/wall/wall_10.wav"
+T.Sfx[Sfx.ImpactWall+10]="Sound/impact/wall/wall_11.wav"
+T.Sfx[Sfx.ImpactWall+11]="Sound/impact/wall/wall_12.wav"
+T.Sfx[Sfx.ImpactWall+12]="Sound/impact/wall/wall_13.wav"
+T.Sfx[Sfx.ImpactWall+13]="Sound/impact/wall/wall_14.wav"
+T.Sfx[Sfx.ImpactWall+14]="Sound/impact/wall/wall_15.wav"
+T.Sfx[Sfx.ImpactWall+15]="Sound/impact/wall/wall_16.wav"
+T.Sfx[Sfx.ImpactWall+16]="Sound/impact/wall/wall_17.wav"
+T.Sfx[Sfx.ImpactWall+17]="Sound/impact/wall/wall_18.wav"
+T.Sfx[Sfx.ImpactWall+18]="Sound/impact/wall/wall_19.wav"
+T.Sfx[Sfx.ImpactWall+19]="Sound/impact/wall/wall_20.wav"
+
+
+--UI Icon Left
+T.Sfx[UiIconLeft+0]="Sound/ui/icon/icon_left_01.wav"
+T.Sfx[UiIconLeft+1]="Sound/ui/icon/icon_left_02.wav"
+
+--UI Icon Right
+T.Sfx[UiIconRight+0]="Sound/ui/icon/icon_right_01.wav"
+T.Sfx[UiIconRight+1]="Sound/ui/icon/icon_right_02.wav"
+
+T.Sfx[UiIconDeny]="Sound/ui/icon/deny.wav"
+
+--Missing Res
+T.Sfx[MsgMissingResMen+0]="Sound/msgs/missing_res/men/01.wav"
+T.Sfx[MsgMissingResMen+1]="Sound/msgs/missing_res/men/02.wav"
+T.Sfx[MsgMissingResMen+2]="Sound/msgs/missing_res/men/03.wav"
+	

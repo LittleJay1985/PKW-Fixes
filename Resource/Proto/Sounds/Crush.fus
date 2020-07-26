@@ -1,0 +1,24 @@
+
+--Impact Crush SFX
+T.Sfx[Sfx.ImpactCrush+0]="Sound/impact/crush/crush_01.wav"
+T.Sfx[Sfx.ImpactCrush+1]="Sound/impact/crush/crush_02.wav"
+T.Sfx[Sfx.ImpactCrush+2]="Sound/impact/crush/crush_03.wav"
+T.Sfx[Sfx.ImpactCrush+3]="Sound/impact/crush/crush_04.wav"
+T.Sfx[Sfx.ImpactCrush+4]="Sound/impact/crush/crush_05.wav"
+T.Sfx[Sfx.ImpactCrush+5]="Sound/impact/crush/crush_06.wav"
+T.Sfx[Sfx.ImpactCrush+6]="Sound/impact/crush/crush_07.wav"
+T.Sfx[Sfx.ImpactCrush+7]="Sound/impact/crush/crush_08.wav"
+T.Sfx[Sfx.ImpactCrush+8]="Sound/impact/crush/crush_09.wav"
+T.Sfx[Sfx.ImpactCrush+9]="Sound/impact/crush/crush_10.wav"
+T.Sfx[Sfx.ImpactCrush+10]="Sound/impact/crush/crush_11.wav"
+T.Sfx[Sfx.ImpactCrush+11]="Sound/impact/crush/crush_12.wav"
+T.Sfx[Sfx.ImpactCrush+12]="Sound/impact/crush/crush_13.wav"
+T.Sfx[Sfx.ImpactCrush+13]="Sound/impact/crush/crush_14.wav"
+T.Sfx[Sfx.ImpactCrush+14]="Sound/impact/crush/crush_15.wav"
+T.Sfx[Sfx.ImpactCrush+15]="Sound/impact/crush/crush_16.wav"
+T.Sfx[Sfx.ImpactCrush+16]="Sound/impact/crush/crush_17.wav"
+T.Sfx[Sfx.ImpactCrush+17]="Sound/impact/crush/crush_18.wav"
+T.Sfx[Sfx.ImpactCrush+18]="Sound/impact/crush/crush_19.wav"
+T.Sfx[Sfx.ImpactCrush+19]="Sound/impact/crush/crush_20.wav"
+
+	
