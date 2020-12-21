@@ -1,0 +1,2755 @@
+GLOBALS.IntroMenu = {}
+
+#include <Resource/Interface/Social/AllianceWindow.fus>
+#include <Resource/Interface/Social/NewSocialWindow.fus>
+#include <Resource/Interface/Menus/BattleMakerWindow.fus>
+#include <Resource/Interface/Menus/JoinGameWindow.fus>
+#include <Resource/Interface/Menus/TutorialMenu.fus>
+
+function GLOBALS.IntroMenu.Open(this)	
+	if this.Loaded then
+		this:Close()
+	end
+		
+	if (GLOBALS.CampaignNationWindow and GLOBALS.CampaignNationWindow.Loaded) or (GLOBALS.CampaignSelectionWindow and GLOBALS.CampaignSelectionWindow.Loaded) then
+		return
+	end
+	
+	MapGUI:Open("Menu")
+	Command:EnableTrigger("ChangeScene","Men")
+	
+	CallBack.HideWorldMapBanners()
+	GLOBALS.DayNightClockWindow:Close()
+	Interface:AddTimedEvent(function()
+		CallBack.HideWorldMapBanners()
+	end, nil, 0.5)
+	
+	-- Server Time Test
+	local year, month, day, hour, minute, second = chrono.now_components(false)
+	Interface:DebugOutput("Server Time: "..year..month..day..hour..minute..second)
+	
+	--Reset mouse cursor
+	SetMouseCursor("Art/interface/Cursor/General.ico",0,0)
+		
+	-- Resetting various values
+	Command:SetGameValue("CampaignID",0)
+	Command:SetGameValue("TutorialID",0)
+	Command:SetGameValue("BattleData", Shared.BarStringFromTable({}))
+	GLOBALS.BattleData = nil
+	Command:SetGameValue("MapNumber", nil)
+	Command:SetGameValue("CurCity", nil)
+	Command:SetGameValue("IsReload", nil)
+	Command:SetGameValue("IsCampaignReload", nil)
+	Command:SetGameValue("SavedTimeLimit",nil)
+	
+	if GLOBALS.WorldMapGUI and GLOBALS.WorldMapGUI.News then
+		GLOBALS.WorldMapGUI.News = nil
+	end
+	
+	GLOBALS.NoCityClickers = nil
+	
+	set_local_saved_data("saveContinued",false)
+	for p=1,4 do		
+		Command:SetGameValue("Player"..p, nil)
+	end
+	GLOBALS.LoadingStory = false
+	GLOBALS.BuildingGroupActive = {}
+	
+	if not get_local_saved_data("GameStarted") then
+		Interface:ScenarioSignal("SetSteamAchievement","start_1")
+		set_local_saved_data("GameStarted",true)
+	end
+	
+	-- reset currentCapture values
+	for p=1,4 do
+		set_local_saved_data("currentCapture"..p,false)
+	end
+	set_local_saved_data("currentSave",false)
+	
+	ChatWindow:Close()
+	
+	if GLOBALS.LoggedIn and not GLOBALS.OfflineMode then
+		-- Get Guild Membership
+		if not GLOBALS.MyAlliance then
+			CallBack.InitializeMyAlliance()
+		end
+		
+		-- Get room count data
+		if not GLOBALS.GettingRoomCountData then
+			GetRoomCounts()
+			GLOBALS.GettingRoomCountData = true
+		end
+		
+		-- Get all trade data and re-send old style trade offer on login
+		if not GLOBALS.TradeOfferData then
+			local sellItemID = User_GetOnlineValue(41) or 0
+			if sellItemID>=401 and sellItemID<=412 then
+				local sellAmount = User_GetOnlineValue(42) or 0
+				local buyItemID = User_GetOnlineValue(43) or 0
+				local buyAmount = User_GetOnlineValue(44) or 0
+				
+				-- Add to new trade system
+				SetTrade(sellItemID,sellAmount,buyItemID,buyAmount)
+				
+				-- Advertise offer
+				sellAmount = sellAmount < 10 and "0"..sellAmount or sellAmount
+				buyAmount = buyAmount < 10 and "0"..buyAmount or buyAmount
+				SendChat(0,"__ADDOFFER__"..sellItemID..sellAmount..buyItemID..buyAmount) -- sellerID comes from SenderID
+				
+				-- Remove old style data
+				User_SetOnlineValue(41,0)
+				User_SetOnlineValue(42,0)
+				User_SetOnlineValue(43,0)
+				User_SetOnlineValue(44,0)
+				
+			end
+			
+			GetAllTrades()
+			GetOwnTrade()	-- for testing
+			GLOBALS.TradeOfferData = true
+		end
+	end
+	
+	-- Reset battle reward time check
+	GLOBALS.BattleRewardCheck = false
+	
+	-- Reset continue solo button
+	GLOBALS.CanContinueSolo = false
+	set_local_saved_data("saveContinued",false)
+	GLOBALS.CanContinueZombie = false
+	
+	--Disable Cheat Detection
+	CallBack.DisableCheatDetection()
+	
+	-- Get previously selected race
+	GLOBALS.SelectedRace = math.clamp(1,User_GetOnlineValue(6) or 0,3)
+	
+	-- Unlock default Techs
+	for techNumber,data in table.pair(Shared.TechUnlocks or {}) do
+		if data.default then
+			User_SetOnlineValue(techNumber,1)	-- unlock
+		end
+	end
+	
+	-- Disconnect Check
+	if (User_GetOnlineValue(9) or 0)>0 then
+		-- player disconnected, count as loss
+		local lastBattleType = (User_GetOnlineValue(8) or 0)>0 and User_GetOnlineValue(8) or Command:GetGameValue("BattleType") or 1
+		CallBack.PlayerDefeated(Player.ID,lastBattleType,true)
+		User_SetOnlineValue(9,0)
+		local numDisconnects = User_GetOnlineValue(7) or 0
+		User_SetOnlineValue(7,numDisconnects+1)
+		
+		Interface:DebugOutput("Last time Disconnected, record loss for battle type "..lastBattleType.." Total disconnects: "..numDisconnects+1)
+	else
+		Interface:DebugOutput("Did not Disconnect last time")
+	end
+	
+	Command:SetGameValue("BattleType",0)
+	
+	local OnClick={}
+	
+	local FadeWindow=GUIManager:CreateWindow(
+		0,0,RelAlign.ToLeft,RelAlign.ToTop,99,
+		Interface:GetScreenWidth(),Interface:GetScreenHeight(),
+		{},
+		0,0,0,1,
+		1,1,1,0,
+		false,false,
+		"",
+		1,1,1,1,
+		GLOBALS.Fonts[18],
+		nil,nil,nil,nil,nil
+	)
+	
+	local windowFont = GLOBALS.Fonts[16]
+	local iconSize = math.ceil(96 * GLOBALS.Scale)	
+	local logoSize = math.round(GLOBALS.Scale * 512)
+	
+	--Interface:DebugOutput("Scale: "..GLOBALS.Scale.." Icon Size: "..iconSize)
+	this.Window = GUIManager:CreateWindow(
+		0,0,RelAlign.ToLeft,RelAlign.ToTop,15,
+		Interface:GetScreenWidth(),Interface:GetScreenHeight(),
+		{},
+		0,0,0,0, -- Backbround rgba
+		1,1,1,0, -- Border rgba
+		false,false,
+		"",
+		1,1,1,1,
+		windowFont,
+		nil,nil,nil,nil,nil
+	)
+	
+	local wx,wy = this.Window:GetAbsolutePosition(RelAlign.ToLeft, RelAlign.ToTop)
+	
+	local function OnMouseOver(Self)
+		if GLOBALS.ButtonListWindow and GLOBALS.ButtonListWindow.Loaded then
+			return
+		end
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.MouseOverPopUp:Open((Self.Data.xPos or 0), (Self.Data.yPos or 0), Self.Data.title, Self.Data.text, nil)
+	end
+	local function OnMouseOut(Self)
+		GLOBALS.MouseOverPopUp:Close()
+	end
+
+	this.LogoWindow = GUIManager:CreateWindow(
+		0,0,RelAlign.ToCenter,RelAlign.ToTop,10,
+		logoSize,logoSize,
+		{},
+		0,0,0,0, -- Backbround rgba
+		1,1,1,0, -- Border rgba
+		false,false,
+		"",
+		1,1,1,1,
+		windowFont,
+		nil,nil,nil,nil,nil
+	)
+
+	this.LogoWindow:CreateStaticImage(
+		0,0,RelAlign.ToCenter,RelAlign.ToTop,1,
+		logoSize,logoSize,
+		{"Art/Interface/logo",0,0,512,512,true},	--..suffix
+		1,1,1,1,
+		false, -- centre on origin
+		0
+	)
+	
+	if not (get_local_saved_data("HideWelcomeMessage") or false) then
+		local welcomeWidth = math.round(GLOBALS.Scale * 800)
+		local welcomeHeight = math.round(GLOBALS.Scale * 600)
+		local welcomeIcon = math.round(GLOBALS.Scale * 64)
+		local welcomeFont = GLOBALS.Fonts[16]	-- GLOBALS.Scale > 0.5 and GLOBALS.Fonts[16] or GLOBALS.Fonts[14]
+		local welcomeFontHeight = welcomeFont:GetTextHeight()
+		
+		local lines = math.ceil((welcomeHeight - (2*welcomeIcon))/welcomeFontHeight)
+		
+		this.WelcomeWindow = GUIManager:CreateWindow(
+			0,math.min(logoSize,(Interface:GetScreenHeight() - welcomeHeight)/2),
+			RelAlign.ToRight,RelAlign.ToTop,20,
+			welcomeWidth, welcomeHeight,
+			{"Art/Interface/note paper",0,0,2048,1536},
+			1,1,1,1, -- Backbround rgba
+			1,1,1,0, -- Border rgba
+			false,false,
+			"",
+			1,1,1,1,
+			welcomeFont,
+			nil,nil,nil,nil,nil
+		)
+		
+		this.WelcomeWindow.StretchInterior = true
+		
+		local text = GetString("welcome_message")
+		local textField = this.WelcomeWindow:CreateMultilineEdit( 
+			welcomeIcon/2, welcomeIcon,
+			RelAlign.ToLeft,RelAlign.ToTop,2,
+			welcomeWidth - welcomeIcon,lines,
+			0,0,0,0,
+			0,0,0,0,
+			0,0,0,0,
+			""..text,
+			0,0,0,0.75,		-- GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+			welcomeFont
+		)
+		
+		textField.InputLocked = true
+		
+		local function GoToForum(Self)
+			Interface:OpenURL("http://steamcommunity.com/app/1300700/discussions/")
+		end
+		
+		this.WelcomeWindow:CreateButton(
+			welcomeIcon/2, welcomeIcon,
+			RelAlign.ToLeft,RelAlign.ToTop,3,
+			welcomeWidth - welcomeIcon,welcomeHeight - (2*welcomeIcon),
+			true, 
+			{}, -- enabled
+			{}, -- clicked
+			{}, -- mouseover
+			{}, -- disabled
+			1,1,1,0,
+			"", 
+			GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+			RelAlign.ToCenter,
+			welcomeFont,
+			GoToForum,nil,nil,nil
+		)
+		
+		local function CloseWelcome(Self)
+			set_local_saved_data("HideWelcomeMessage",true)
+			this.WelcomeWindow:Move(0 - this.WelcomeWindow.Width,0,GLOBALS.SlideTime or 1)
+			Interface:AddTimedEvent(function()
+				if this.WelcomeWindow and this.WelcomeWindow.Close then
+					this.WelcomeWindow:Close()
+					this.WelcomeWindow = nil
+				end
+			end, nil, (GLOBALS.SlideTime or 1) + 0.25)
+		end
+		this.WelcomeWindow:CreateButton(
+			welcomeIcon,0,
+			RelAlign.ToRight,RelAlign.ToTop,4,
+			welcomeIcon,welcomeIcon,
+			true, 
+			{"Art/Interface/Btn_close_note",0,0,128,128}, -- enabled
+			{"Art/Interface/Btn_close_note",128,0,256,128}, -- clicked
+			{"Art/Interface/Btn_close_note",0,128,128,256}, -- mouseover
+			{"Art/Interface/Btn_close_note",128,128,256,256}, -- disabled
+			1,1,1,1,
+			"", 
+			GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+			RelAlign.ToCenter,
+			welcomeFont,
+			CloseWelcome,nil,nil,nil
+		)
+		
+		--[[		
+			{"Art/Interface/icon_cross",0,0,64,64},
+			{"Art/Interface/icon_cross",0,0,64,64},
+			{"Art/Interface/icon_cross",0,0,64,64},
+			{"Art/Interface/icon_cross",0,0,64,64},
+		]]
+		
+		--this.WelcomeWindow:Move(this.WelcomeWindow.Width,0,GLOBALS.SlideTime or 1)
+	end
+
+	local versionFont=GLOBALS.Fonts[12]
+	local Width = versionFont:GetTextWidth(""..GLOBALS.VERSION.."   ")
+	local Height = versionFont:GetTextHeight()
+		
+	this.GameVersion = this.Window:CreateStaticText(
+		0,Height,
+		RelAlign.ToLeft,RelAlign.ToBottom,1,
+		Width,
+		""..GLOBALS.VERSION.."  ",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		versionFont
+	)
+	
+	-- Create Window
+	local flagSize = math.round(GLOBALS.Scale * 32)
+	this.LanguageWindow=GUIManager:CreateWindow(
+		0,0,
+		RelAlign.ToLeft,RelAlign.ToTop,60,
+		flagSize,flagSize,
+		{},
+		1,1,1,1,
+		1,1,1,1,
+		false,false,
+		"",
+		1,1,1,1,
+		windowFont,
+		nil,nil,nil,nil,
+		nil
+	)
+	
+	local artPath = "Art/Interface/"
+	this.LanguageWindow.InteriorTexture={artPath.."MessageBoxBkg",0,0,256,128,true}
+	this.LanguageWindow.TopEdgeTexture={artPath.."MessageBoxBrdHorz",0,0,128,6}
+	this.LanguageWindow.BottomEdgeTexture={artPath.."MessageBoxBrdHorz",0,6,128,12}
+	this.LanguageWindow.LeftEdgeTexture={artPath.."MessageBoxBrdVert",0,0,6,128}
+	this.LanguageWindow.RightEdgeTexture={artPath.."MessageBoxBrdVert",6,0,12,128}
+	this.LanguageWindow.TopLeftCornerTexture={artPath.."MessageBoxCrn",0,0,16,16}
+	this.LanguageWindow.TopRightCornerTexture={artPath.."MessageBoxCrn",16,0,32,16}
+	this.LanguageWindow.BottomLeftCornerTexture={artPath.."MessageBoxCrn",0,16,16,32}
+	this.LanguageWindow.BottomRightCornerTexture={artPath.."MessageBoxCrn",16,16,32,32}
+
+	function OnClick.Flag(Self,Info)
+		GLOBALS.IntroMenu:Close()
+		GLOBALS:CreateLanguagePrompt()
+	end
+	local flagPath = "Art/Interface/Flags/"
+	
+	local lang = string.advance(get_local_saved_data("lang") or "lang_en",5)
+	this.LanguageWindow:CreateButton(
+		0,0,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		flagSize,flagSize,
+		true, 
+		{flagPath..lang,true},
+		{flagPath..lang,true},
+		{flagPath..lang,true},
+		{flagPath..lang,true},
+		1,1,1,1,
+		"", 
+		1,1,1,1,
+		RelAlign.ToRight,
+		windowFont,
+		OnClick.Flag,nil,nil,nil
+	)
+	
+	function OnClick.tutorial(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.IntroMenu:Close()
+		MenuCommonFunctions.FadeScreen(0.5,function() GLOBALS.TutorialMenu:Open() end,nil,nil,0.75)	
+	end
+	
+	function OnClick.campaign(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.IntroMenu:Close()
+		MenuCommonFunctions.FadeScreen(0.5,function()
+			local noCampaign = true
+			for cpnID=1,10 do
+				local initialized = get_local_saved_data("Campaign"..cpnID, "Initialized") or false
+				if initialized then
+					noCampaign = false
+					break
+				end
+			end
+			if noCampaign then
+				GLOBALS.CampaignNationWindow:Open(nil,nil,1)
+			else
+				GLOBALS.CampaignSelectionWindow:Open()
+			end
+		end,nil,nil,0.75)	
+	end
+	
+	function OnClick.skirmish(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.IntroMenu:Close()
+		MenuCommonFunctions.FadeScreen(0.5,function()
+			if GLOBALS.OfflineMode then
+				GLOBALS.BattleMakerWindow:Open()
+			else
+				GLOBALS.JoinGameWindow:Open()
+			end
+			ChatWindow:Main(true)
+		end,nil,nil,0.75)	
+	end
+	
+	function OnClick.options(self,info)		
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.IntroMenu:Close()
+		MenuCommonFunctions.FadeScreen(0.5,function() GLOBALS.OptionsWindow:Open() end,nil,nil,0.75)
+	end
+	
+	function OnClick.login(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.IntroMenu:Close()
+		GLOBALS.IntroReady=true
+		User_Login("")
+		MessageBoxWindow:Open(GetString("loginmenu_logining_in"),"",{},nil,nil,nil,nil)
+	end
+	
+	function OnClick.offline(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.OfflineMode = true
+		User_Logout()
+		GLOBALS.IntroMenu:Close()
+		Interface:AddTimedEvent(function() GLOBALS.IntroMenu:Open() end, nil, 0.25)
+	end
+	
+	function OnClick.help(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		GLOBALS.HelpWindow:Open(GLOBALS.HelpTopics["General"])
+	end
+	
+	function OnClick.exit(self,info)
+		CallBack.PlayUIfxForPlayer(1,"Dialog")
+		MenuCommonFunctions.ExitGame()				
+	end
+	
+	local buttonWidth = math.round(256 * GLOBALS.Scale)
+	local buttonHeight = math.round(128 * GLOBALS.Scale)
+	
+	local MenuButtons = {}
+	MenuButtons[table.count(MenuButtons)+1] = "campaign"
+	--MenuButtons[table.count(MenuButtons)+1] = "tutorial"	
+	MenuButtons[table.count(MenuButtons)+1] = "skirmish"
+	MenuButtons[table.count(MenuButtons)+1] = "options"	
+	MenuButtons[table.count(MenuButtons)+1] = "exit"	
+		
+	--RESTART TUTORIAL AFTER COMPLETING IT	
+	if (get_local_saved_data("ContinueCampaign") or 0) == 5 then
+		set_local_saved_data("ContinueCampaign",1)
+	end
+	
+	
+	this.BottomWindow=GUIManager:CreateWindow(
+		0,buttonHeight,
+		RelAlign.ToCenter,RelAlign.ToBottom,60,
+		table.count(MenuButtons) * buttonWidth,buttonHeight,
+		{},
+		1,1,1,0,
+		1,1,1,0,
+		false,false,
+		"",
+		1,1,1,1,
+		windowFont,
+		nil,nil,nil,nil,
+		nil
+	)
+	
+	-- Menu
+	local ypos = logoSize -- + buttonHeight
+	local menuFont = GLOBALS.Fonts[32]
+	
+	for pos,icon in table.pair(MenuButtons) do
+		this.BottomWindow:CreateButton(
+			(pos - 1) * buttonWidth,0,
+			RelAlign.ToLeft,RelAlign.ToTop,5,
+			buttonWidth,buttonHeight,
+			true,
+			{"Art/Interface/button_paper_0"..pos,0,0,512,256}, -- enabled
+			{"Art/Interface/button_paper_0"..pos,0,0,512,256}, -- clicked
+			{"Art/Interface/button_paper_0"..pos,0,0,512,256}, -- mouseover
+			{"Art/Interface/button_paper_0"..pos,0,0,512,256}, -- disabled
+			1,1,1,1,
+			""..GetString("intromenu_"..icon),
+			0,0,0,1,		--GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+			RelAlign.ToCenter,
+			menuFont,
+			OnClick[icon],OnMouseOver,OnMouseOut,
+			{xPos=(Interface:GetScreenWidth() - math.round(GLOBALS.Scale * 512)/2),yPos=Interface:GetScreenHeight() - 2.5*buttonHeight,
+				title=GetString("intromenu_"..icon),text=GetString("tooltip_button_"..icon)}
+		)
+		ypos+=buttonHeight
+	end
+	
+	GameLog:SetPos(0,0,RelAlign.ToRight,RelAlign.ToCenter)
+			
+	this.Loaded = true
+	
+	this.LogoWindow:Move(0,0 - this.LogoWindow.Height,0)
+	this.LanguageWindow:Move(0 - this.LanguageWindow.Width,0 - this.LanguageWindow.Height,0)	
+	this.BottomWindow:Move(0,0 - this.BottomWindow.Height,0)
+	
+	
+	-- Prompt for email
+	if not GLOBALS.OfflineMode then
+		if get_local_saved_data("lang") then
+			Interface:AddTimedEvent(function()
+				if (User_GetOnlineValue(13) or 2)<2 then
+					if not (GLOBALS.TextBoxWindow and GLOBALS.TextBoxWindow.Loaded) then
+						User_SetOnlineValue(13,2)
+						GLOBALS.EmailPrompt()
+					end
+				else
+					--GLOBALS.DoPoll()
+				end				
+			end, nil, 2)
+		end
+	end
+	
+	this.Window:FadeOut(0.25)
+	Interface:AddTimedEvent(function()
+		FadeWindow:FadeOut(GLOBALS.SlideTime or 1)
+		Interface:AddTimedEvent(function()
+			FadeWindow:Close()
+		end, nil, GLOBALS.SlideTime or 1)
+		Interface:AddTimedEvent(function()
+			GLOBALS.IntroMenu:SlideIn()
+			GLOBALS.FirstSlideDone = true
+		end, nil, GLOBALS.FirstSlideDone and 1 or 2)
+	end, nil, GLOBALS.SlideTime or 1)
+		
+end
+
+function GLOBALS.IntroMenu.SlideIn(this)
+	if not this.Loaded or this.WindowsAreIn then
+		return
+	end
+	
+	this.Window:FadeIn(2 * (GLOBALS.SlideTime or 1))
+	
+	if this.LanguageWindow then
+		this.LanguageWindow:Move(this.LanguageWindow.Width,this.LanguageWindow.Height,GLOBALS.SlideTime or 1)
+	end
+	if this.LeftWindow then
+		this.LeftWindow:Move(this.LeftWindow.Width,0,GLOBALS.SlideTime or 1)
+	end	
+	if this.RightWindow then
+		this.RightWindow:Move(this.RightWindow.Width,0,GLOBALS.SlideTime or 1)
+	end
+	if this.BottomWindow then
+		this.BottomWindow:Move(0,this.BottomWindow.Height,GLOBALS.SlideTime or 1)
+	end
+	if this.WelcomeWindow then
+		this.WelcomeWindow:Move(this.WelcomeWindow.Width,0,GLOBALS.SlideTime or 1)
+	end
+	if this.LogoWindow then
+		this.LogoWindow:Move(0,this.LogoWindow.Height,GLOBALS.SlideTime or 1)
+	end
+	
+	this.WindowsAreIn = true
+	if GLOBALS.News then
+		GLOBALS.NewsWindow:Open()
+	else
+		--Interface:DebugOutput("Requesting news")
+		GetNews(0,GLOBALS.NewsItems or 2)
+	end
+end
+
+function GLOBALS.IntroMenu.Close(this)
+	if this.Loaded == false then return end
+	
+	GLOBALS.NewsWindow:Close()
+	this.WindowsAreIn = nil
+	if this.Window then
+		if this.Window.Close then
+			this.Window:Close()
+		end
+		this.Window = nil
+	end
+	if this.WelcomeWindow and this.WelcomeWindow.Close then
+		this.WelcomeWindow:Close()
+		this.WelcomeWindow = nil
+	end
+	if this.Advisors then
+		for advisor in (this.Advisors or {}) do
+			if advisor.Window and advisor.Window.Close then
+				advisor.Window:Close()
+			end
+		end
+		this.Advisors = nil
+	end
+	if this.RightWindow then
+		if this.RightWindow.Close then
+			this.RightWindow:Close()
+		end
+		this.RightWindow = nil
+	end
+	if this.BottomWindow then
+		if this.BottomWindow.Close then
+			this.BottomWindow:Close()
+		end
+		this.BottomWindow = nil
+	end
+	if this.LeftWindow then
+		if this.LeftWindow.Close then
+			this.LeftWindow:Close()
+		end
+		this.LeftWindow = nil
+	end
+	if this.LanguageWindow then
+		if this.LanguageWindow.Close then
+			this.LanguageWindow:Close()
+		end
+		this.LanguageWindow = nil
+	end
+	if this.LogoWindow then
+		if this.LogoWindow.Close then
+			this.LogoWindow:Close()
+		end
+		this.LogoWindow = nil
+	end
+	if this.SocialMediaWindow then
+		if this.SocialMediaWindow.Close then
+			this.SocialMediaWindow:Close()
+		end
+		this.SocialMediaWindow = nil
+	end
+	if GLOBALS.SocialWindow then
+		if GLOBALS.SocialWindow.Close then
+			GLOBALS.SocialWindow:Close()
+		end
+	end	
+	if GLOBALS.HelpWindow then
+		if GLOBALS.HelpWindow.Close then
+			GLOBALS.HelpWindow:Close()
+		end
+	end	
+	if GLOBALS.OptionsWindow then
+		if GLOBALS.OptionsWindow.Close then
+			GLOBALS.OptionsWindow:Close()
+		end
+	end
+	CallBack.CloseAllianceWindows()
+	
+	this.Loaded = false
+	
+	GLOBALS.MouseOverPopUp:Close()
+		
+	GLOBALS.ButtonListWindow:Close()
+	
+end
+
+--[[ DAILY REWARD ]]--
+function GLOBALS.DailyReward()
+	local lastYear = math.clamp(2014,User_GetOnlineValue(1) or 2014,2100)
+	local lastMonth = math.clamp(1,User_GetOnlineValue(2) or 1,12)
+	local lastDay = math.clamp(1,User_GetOnlineValue(3) or 1,31)
+	local lastHour = math.clamp(0,User_GetOnlineValue(4) or 0,23)
+	local isNewDay = false
+	local daysInMonth = {[0]=0,[1]=31,[2]=28,[3]=31,[4]=30,[5]=31,[6]=30,[7]=31,[8]=31,[9]=30,[10]=31,[11]=30,[12]=31}
+	
+	local nextDay = lastDay+1
+	local nextDaysMonth = lastMonth
+	local nextDaysYear = lastYear
+	if nextDay > daysInMonth[lastMonth] then
+		nextDay = 1
+		nextDaysMonth = lastMonth + 1
+		if nextDaysMonth>12 then
+			nextDaysMonth = 1
+			nextDaysYear = lastYear + 1
+		end
+	end
+	
+	local year, month, day, hour, minute, second = chrono.now_components(false)
+	if (lastDay==day and lastMonth==month and lastYear==year) or (hour<=lastHour and nextDay==day and nextDaysMonth==month and nextDaysYear==year) then --same day or earlier than same hour next day
+		isNewDay = false
+	else
+		isNewDay = true
+	end
+	local runTest = false -- set true to show Daily Reward each time Intro is opened
+	if isNewDay or runTest then
+		-- Reset daily invite limit for Guilds
+		User_SetOnlineValue(21,0)
+		
+		User_SetOnlineValue(1,year)
+		User_SetOnlineValue(2,month)
+		User_SetOnlineValue(3,day)
+		User_SetOnlineValue(4,hour)
+		-- give good reward
+		local inGuild = GLOBALS.MyAlliance and GLOBALS.MyAlliance~="" or false
+		CallBack.GiveCraftingComponent(Player.ID,nil,inGuild and 2 or 1,false,false,GetString("shop_window_daily_reward")..(inGuild and " + "..GetString("guild_bonus") or ""))
+		
+		-- Reset devOffers
+		GLOBALS.DevOfferCount = GLOBALS.DevOfferCount or 5
+		if (GLOBALS.DevOfferCount or 0) > 0 then
+			for i=1,GLOBALS.DevOfferCount do
+				User_SetOnlineValue(800 + i,0)
+			end
+		end
+	end
+end
+
+function GLOBALS.CheckAchievements()
+	if true then	-- Temp until achievements are updated for MKW
+		return
+	end
+	-- Get win/loss data
+	local statData = GLOBALS.StatsWindow:GetData()
+	local totalRatedWins = 0
+	local totalRatedLosses = 0
+	local raceRatedWins = {}
+	local raceRatedLosses = {}
+	local raceTechs = {}
+	local singleplayerWins = 0
+	local singleplayerLosses = 0
+	local unratedBattles = 0
+	for i=1,3 do	-- race
+		raceRatedWins[i] = 0
+		raceRatedLosses[i] = 0
+		raceTechs[i] = 0
+		for j=1,3 do	-- battle type
+			local wins = (User_GetOnlineValue(110 + 20*i + j) or 0)
+			local losses = (User_GetOnlineValue(120 + 20*i + j) or 0)
+			--Interface:DebugOutput(""..i..j.." "..wins.." "..losses)
+			raceRatedWins[i] = raceRatedWins[i] + (User_GetOnlineValue(110 + 20*i + j) or 0)
+			raceRatedLosses[i] = raceRatedLosses[i] + (User_GetOnlineValue(120 + 20*i + j) or 0)
+		end
+		totalRatedWins = totalRatedWins + raceRatedWins[i]
+		totalRatedLosses = totalRatedLosses + raceRatedLosses[i]
+		
+		-- Singleplayer
+		singleplayerWins = singleplayerWins + (User_GetOnlineValue(115 + 20*i) or 0)
+		singleplayerLosses = singleplayerLosses + (User_GetOnlineValue(125 + 20*i) or 0)
+		--Interface:DebugOutput("singleplayerWins: "..singleplayerWins.." singleplayerLosses: "..singleplayerLosses)
+		
+		-- Unrated
+		for j=6,9 do	-- battle type
+			unratedBattles = unratedBattles + (User_GetOnlineValue(110 + 20*i + j) or 0) + (User_GetOnlineValue(120 + 20*i + j) or 0)
+		end
+		
+		-- Techs
+		for techID,techData in table.pair(Shared.TechUnlocks or {}) do
+			if string.left(""..techID,1)==""..i then
+				if (User_GetOnlineValue(techID) or 0)>0 then
+					raceTechs[i] = raceTechs[i] + 1
+				end
+			end
+		end
+		--Interface:DebugOutput("raceTechs["..i.."]: "..raceTechs[i])
+	end
+	
+	--Interface:DebugOutput("totalRatedWins: "..totalRatedWins)
+	--Interface:DebugOutput("totalRatedLosses: "..totalRatedLosses)
+	--[[ for copy&paste	
+	if (User_GetOnlineValue(701) or 0)<=0 then -- do we need to check achievement
+		if then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_1")	-- keep spelling mistake
+			User_SetOnlineValue(701,1)
+		end
+	end
+	]]
+	--[[ Achievements 1-12 are for Rated Battles ]]--
+	-- I won, I won
+	if (User_GetOnlineValue(701) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 1")
+		if totalRatedWins>= 1 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_1")	-- keep spelling mistake
+			User_SetOnlineValue(701,1)
+		end
+	end
+	-- Veni, Vidi, Vici
+	if (User_GetOnlineValue(702) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 2")
+		if totalRatedWins>= 5 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_2")	-- keep spelling mistake
+			User_SetOnlineValue(702,1)
+		end
+	end
+	-- The Unstoppable
+	if (User_GetOnlineValue(703) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 3")
+		if totalRatedWins>= 20 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_3")	-- keep spelling mistake
+			User_SetOnlineValue(703,1)
+		end
+	end
+	-- The Champion
+	if (User_GetOnlineValue(704) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 4")
+		if totalRatedWins>= 50 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_4")	-- keep spelling mistake
+			User_SetOnlineValue(704,1)
+		end
+	end
+	-- The Hundred
+	if (User_GetOnlineValue(705) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 5")
+		if totalRatedWins>= 100 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_5")	-- keep spelling mistake
+			User_SetOnlineValue(705,1)
+		end
+	end
+	-- Veni, Vidi, Deliqui
+	if (User_GetOnlineValue(706) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 6")
+		if totalRatedLosses>= 5 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_6")	-- keep spelling mistake
+			User_SetOnlineValue(706,1)
+		end
+	end
+	-- Knight's Squire
+	if (User_GetOnlineValue(707) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 7")
+		if raceRatedWins[1]>= 5 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_7")	-- keep spelling mistake
+			User_SetOnlineValue(707,1)
+		end
+	end
+	-- Forest Ranger
+	if (User_GetOnlineValue(708) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 8")
+		if raceRatedWins[2]>= 5 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_8")	-- keep spelling mistake
+			User_SetOnlineValue(708,1)
+		end
+	end
+	-- Beast Rider
+	if (User_GetOnlineValue(709) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 9")
+		if raceRatedWins[3]>= 5 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_9")	-- keep spelling mistake
+			User_SetOnlineValue(709,1)
+		end
+	end
+	-- Lord Commander
+	if (User_GetOnlineValue(710) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 10")
+		if raceRatedWins[1]>=10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_10")	-- keep spelling mistake
+			User_SetOnlineValue(710,1)
+		end
+	end
+	-- Grand Master
+	if (User_GetOnlineValue(711) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 11")
+		if raceRatedWins[2]>=10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_11")	-- keep spelling mistake
+			User_SetOnlineValue(711,1)
+		end
+	end
+	-- Fierce Warlord
+	if (User_GetOnlineValue(712) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 12")
+		if raceRatedWins[3]>=10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_12")	-- keep spelling mistake
+			User_SetOnlineValue(712,1)
+		end
+	end
+
+	--[[ Achievements 13-17 are for the Campaign ]]--
+	local CampaignAchievements = {
+		[13]=501,
+		[14]=502,
+		[15]=503,
+		[16]=504,
+		[17]=505,
+	}
+	for id,value in table.pair(CampaignAchievements) do	
+		if (User_GetOnlineValue(700 + id) or 0)<=0 then -- do we need to check achievement
+			--Interface:DebugOutput("Checking achievement "..id)
+			if (User_GetOnlineValue(value) or 0)>=1 then
+				Interface:ScenarioSignal("SetSteamAchievement","achivement_"..id)	-- keep spelling mistake
+				User_SetOnlineValue(700 + id,1)
+			end
+		end
+	end
+	
+	--[[ Achievements 18-22 are for Cards ]]--	
+	-- Wildcard, Dealer's Choice, Jokers Wild, Gambler, Full House
+	local CardAchievements = {
+		[18]=1,
+		[19]=10,
+		[20]=25,
+		[21]=50,
+		[22]=100,
+	}
+	local totalCardsCrafted = (User_GetOnlineValue(5000) or 0)
+	for id,value in table.pair(CardAchievements) do	
+		if (User_GetOnlineValue(700 + id) or 0)<=0 then -- do we need to check achievement
+			--Interface:DebugOutput("Checking achievement "..id)
+			if totalCardsCrafted>=value then
+				Interface:ScenarioSignal("SetSteamAchievement","achivement_"..id)	-- keep spelling mistake
+				User_SetOnlineValue(700 + id,1)
+			end
+		end
+	end
+	
+	--[[ Achievements 23-26 are for Singleplayer and Unrated ]]--
+	-- Practice Dummy
+	if (User_GetOnlineValue(723) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 23")
+		if unratedBattles>= 1 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_23")	-- keep spelling mistake
+			User_SetOnlineValue(723,1)
+		end
+	end
+	-- Practice Makes Perfect
+	if (User_GetOnlineValue(724) or 0)<=0 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 24")
+		if unratedBattles>= 10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_24")	-- keep spelling mistake
+			User_SetOnlineValue(724,1)
+		end
+	end
+	-- Going Solo
+	if (User_GetOnlineValue(725) or 0)<=99 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 25")
+		if (singleplayerWins + singleplayerLosses)>= 1 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_25")	-- keep spelling mistake
+			User_SetOnlineValue(725,100)
+		end
+	end
+	-- Solo Endeavour
+	if (User_GetOnlineValue(726) or 0)<=99 then -- do we need to check achievement
+		--Interface:DebugOutput("Checking achievement 26")
+		if (singleplayerWins + singleplayerLosses)>= 10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_26")	-- keep spelling mistake
+			User_SetOnlineValue(726,100)
+		end
+	else
+		--Interface:DebugOutput("726 "..User_GetOnlineValue(726))
+	end
+	
+	
+	--[[ Achievements 27-35 are for Techs, Kon numbered them weirdly on Steam though ]]--
+	local TechAchievements = {
+		[27]={race=1,value=10},
+		[28]={race=2,value=10},
+		[29]={race=3,value=10},
+		[31]={race=2,value=20},
+		[30]={race=1,value=20},
+		[32]={race=3,value=20},
+		[33]={race=1},
+		[34]={race=2},
+		[35]={race=3},
+	}
+	for id,data in table.pair(TechAchievements) do	
+		if (User_GetOnlineValue(700 + id) or 0)<=199 then -- do we need to check achievement
+			--Interface:DebugOutput("Checking achievement "..id..": achivement_"..id)
+			if data.value then	-- is specific number of Techs
+				--[[
+				Interface:DebugOutput("data.value "..data.value)
+				Interface:DebugOutput("data.race "..data.race)
+				Interface:DebugOutput("raceTechs["..data.race.."] "..raceTechs[data.race])
+				]]
+				if raceTechs[data.race]>=data.value then
+					Interface:ScenarioSignal("SetSteamAchievement","achivement_"..id)	-- keep spelling mistake
+					User_SetOnlineValue(700 + id,200)
+				end
+			elseif statData[""..data.race.."T"] and statData[""..data.race.."T"]>=100 then -- is 100%				
+				Interface:ScenarioSignal("SetSteamAchievement","achivement_"..id)	-- keep spelling mistake
+				User_SetOnlineValue(700 + id,200)
+			end
+		end
+	end
+	
+	
+	--[[ Achievements 46-49 are for Trade ]]--
+	local currentOfferID = User_GetOnlineValue(41) or 0
+	local completedOffers = ((User_GetOnlineValue(46) or 0) + (User_GetOnlineValue(47) or 0) - (User_GetOnlineValue(48) or 0) - (currentOfferID>=401 and currentOfferID<=412 and 1 or 0))
+	-- Trade Buyer	
+	if (User_GetOnlineValue(746) or 0)<=0 then -- do we need to check achievement
+		if (User_GetOnlineValue(46) or 0)>=1 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_46")	-- keep spelling mistake
+			User_SetOnlineValue(746,1)
+		end
+	end
+	-- Trade Seller	
+	if (User_GetOnlineValue(747) or 0)<=0 then -- do we need to check achievement
+		if ((User_GetOnlineValue(47) or 0) - (User_GetOnlineValue(48) or 0))>=1 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_47")	-- keep spelling mistake
+			User_SetOnlineValue(747,1)
+		end
+	end
+	-- Trade Negotiator
+	if (User_GetOnlineValue(748) or 0)<=0 then -- do we need to check achievement
+		if completedOffers>=10 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_48")	-- keep spelling mistake
+			User_SetOnlineValue(748,1)
+		end
+	end
+	-- Trade Master
+	if (User_GetOnlineValue(749) or 0)<=0 then -- do we need to check achievement
+		if completedOffers>=50 then
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_49")	-- keep spelling mistake
+			User_SetOnlineValue(749,1)
+		end
+	end
+	
+	--[[ Achievements 54-57 are for Treasure and Battle Deaths ]]--
+	-- Note: these have been checked elsewhere, just awarding now so goes to the right player
+	-- Treasure Hunter
+	if (User_GetOnlineValue(754) or 0)==1 then -- do we need to check achievement
+		Interface:ScenarioSignal("SetSteamAchievement","achivement_54")	-- keep spelling mistake
+		User_SetOnlineValue(754,2)
+	end
+	-- Dragon Slayer
+	if (User_GetOnlineValue(755) or 0)==1 then -- do we need to check achievement
+		Interface:ScenarioSignal("SetSteamAchievement","achivement_55")	-- keep spelling mistake
+		User_SetOnlineValue(755,2)
+	end
+	-- Battle Fodder
+	if (User_GetOnlineValue(756) or 0)==1 then -- do we need to check achievement
+		Interface:ScenarioSignal("SetSteamAchievement","achivement_56")	-- keep spelling mistake
+		User_SetOnlineValue(756,2)
+	end
+	-- Battle Master
+	if (User_GetOnlineValue(757) or 0)==1 then -- do we need to check achievement
+		Interface:ScenarioSignal("SetSteamAchievement","achivement_57")	-- keep spelling mistake
+		User_SetOnlineValue(757,2)
+	end
+	-- Zombie Achievements
+	for id=36,41 do	
+		if (User_GetOnlineValue(700+id) or 0)==1 then -- do we need to check achievement
+			Interface:ScenarioSignal("SetSteamAchievement","achivement_"..id)	-- keep spelling mistake
+			User_SetOnlineValue(700+id,2)
+		end
+	end
+end
+
+function GLOBALS.GetRoomHelp()
+	local Help = {}
+	local onlineCount = GLOBALS.PlayersOnline and table.count(GLOBALS.PlayersOnline) or 1
+	if onlineCount > 0 then
+		local battleCount = 0	--GLOBALS.PlayersInBattle and table.count(GLOBALS.PlayersInBattle) or 0
+		for id,data in table.pair(GLOBALS.PlayersInBattle) do
+			if GLOBALS.PlayersOnline[id] then
+				battleCount += 1
+			end
+		end
+		Help.Title = GetString("chat_window_friend_status_online")
+		Help.Text = "\n\n"
+		Help.Text = Help.Text..(battleCount or 0).." "..GetString("battle_in_battle").."\n"
+		Help.Text = Help.Text..GetFormattedString("players_online",{onlineCount or 0})
+		return Help
+	end
+	--[[
+	local RoomHelp = {}
+	
+	RoomHelp.Title = GetString("battle_queue")
+	RoomHelp.Text = "\n"
+	for i in {9,1,2,3} do
+		local playerCount = 0
+		local population = 0
+		local roomCount = 0
+		for countData in (GLOBALS.RoomCountData or {}) do
+			if countData.MatchType and countData.MatchType == i then
+				playerCount = playerCount + (countData.PlayerCount or 0)
+				population = population + (countData.Population or 0)
+				roomCount = roomCount + (countData.RoomCount or 0)
+			end
+		end
+		-- Original
+		--RoomHelp.Text = RoomHelp.Text..GetString(GLOBALS.BattleTypes[i].name)..": "..(i==3 and "\t" or "\t\t")..GetFormattedString("battle_players_in_rooms",{population,roomCount,playerCount}).." \n"
+		-- No space
+		--RoomHelp.Text = RoomHelp.Text..GetString(GLOBALS.BattleTypes[i].name)..": "..GetFormattedString("battle_players_in_rooms",{population,roomCount,playerCount}).." \n"
+		-- Type at end
+		RoomHelp.Text = RoomHelp.Text..GetFormattedString("battle_players_in_rooms",{population,roomCount,playerCount}).." ("..(i==9 and GetString("battle_type_coop") or GetString(GLOBALS.BattleTypes[i].name))..") \n"
+
+	end
+	
+	return RoomHelp
+	]]
+end
+
+
+GLOBALS.MouseOverPopUp = {}
+
+function GLOBALS.OpenMouseOverPopUp(Self, Info) -- for use with buttons
+
+	if Self.Data and (Self.Data.Title or Self.Data.Text) then
+		GLOBALS.MouseOverPopUp:Open(Self.Data.xPos or 0, Self.Data.yPos or 0, Self.Data.Title or "", Self.Data.Text or "", Self.Data.ButtonWidth or 0) 
+	end
+
+end
+
+function GLOBALS.CloseMouseOverPopUp(Self,Info)
+	GLOBALS.MouseOverPopUp:Close()
+end
+
+function GLOBALS.MouseOverPopUp.Open(this, xPos, yPos, title, text, buttonWidth, NoDelay) 
+	if this.Window then
+		this:Close()
+	end
+	
+	text = (text or "").."     "
+	title = " "..(title or "").." "
+	
+	xPos = xPos or 0
+	yPos = yPos or 0
+	buttonWidth = buttonWidth or 0
+	
+	local Font = GLOBALS.Fonts[16]
+		
+	local function OnWindowClose(Self)
+		this.Window=nil
+	end
+	
+	
+	local margin = math.round(GLOBALS.Scale * 16)
+	
+	local textLength = math.max(math.round(GLOBALS.Scale * 256),Font:GetTextWidth(text or " "),Font:GetTextWidth(title or " "))
+	local textHeight = Font:GetTextHeight()
+	
+	local textWidth = math.round(GLOBALS.Scale * 480)	-- math.min(math.round(GLOBALS.Scale * 512),textLength)
+
+	local windowWidth = (2 * margin) + textWidth
+	
+	local lines = math.ceil(textLength/textWidth) + 2
+	
+	local tempText = text or ""
+	while string.find(tempText,"\n")>=0 do
+		lines += 1
+		tempText = string.advance(tempText,string.find(tempText,"\n") + 2)
+	end
+	
+	local windowHeight = (3 * margin) + ((lines + 2) * textHeight)
+	
+	-- Create Window
+	this.Window=GUIManager:CreateWindow(
+		xPos + buttonWidth,yPos,
+		RelAlign.ToLeft,RelAlign.ToTop,
+		85,
+		windowWidth,windowHeight,
+		{},
+		1,1,1,1,
+		1,1,1,1,
+		false,false,
+		"",
+		1,1,1,1,
+		Font,
+		nil,nil,nil,nil,
+		OnWindowClose
+	)
+	
+	local folderName = Shared.FigureOutRace(Player.Race or "Men", "folderFormat")
+		
+	local GameMode = GetGameMode()
+	local artPath = "Art/Interface/"
+	this.Window.InteriorTexture={artPath.."MessageBoxBkgTooltip",0,0,256,128,true}
+	this.Window.TopEdgeTexture={artPath.."MessageBoxBrdHorz",0,0,128,6}
+	this.Window.BottomEdgeTexture={artPath.."MessageBoxBrdHorz",0,6,128,12}
+	this.Window.LeftEdgeTexture={artPath.."MessageBoxBrdVert",0,0,6,128}
+	this.Window.RightEdgeTexture={artPath.."MessageBoxBrdVert",6,0,12,128}
+	this.Window.TopLeftCornerTexture={artPath.."MessageBoxCrn",0,0,16,16}
+	this.Window.TopRightCornerTexture={artPath.."MessageBoxCrn",16,0,32,16}
+	this.Window.BottomLeftCornerTexture={artPath.."MessageBoxCrn",0,16,16,32}
+	this.Window.BottomRightCornerTexture={artPath.."MessageBoxCrn",16,16,32,32}
+			
+	this.Window:CreateStaticText(
+		0,margin,
+		RelAlign.ToCenter,RelAlign.ToTop,2,
+		Font:GetTextWidth(title or "")+2,title or "",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		Font
+	)
+	
+	--[[
+	this.Window:CreateStaticText(
+		0,windowHeight/2,
+		RelAlign.ToCenter,RelAlign.ToTop,2,
+		Font:GetTextWidth(text or "")+2,text or "",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		Font
+	)
+	]]
+		
+	local textField = this.Window:CreateMultilineEdit( 
+		margin,2*margin + textHeight,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		textWidth,lines,
+		0,0,0,0,
+		0,0,0,0,
+		0,0,0,0,
+		""..text,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		Font
+	)
+	
+	textField.InputLocked = true
+	
+	if (xPos or 0)>(Interface:GetScreenWidth()/2) then	-- if on right side of screen, move window to the left
+		this.Window.x = this.Window.x - this.Window.Width - (buttonWidth or 0)
+	end
+	if (this.Window.Height + this.Window.y) > Interface:GetScreenHeight() then -- if going past the bottom of the screen, move it up so it fits
+		this.Window.y = Interface:GetScreenHeight() - this.Window.Height
+	end
+	local gameSpeed = GetGameSpeed and GetGameSpeed() or 0.4
+	if not NoDelay then
+		this.Window.Visible = false
+		Interface:AddTimedEvent(function(Data)
+			if GLOBALS.MouseOverPopUp and GLOBALS.MouseOverPopUp.Window then
+				if Data and Data.Title and Data.Title==title and Data.Text and Data.Text==text then
+					GLOBALS.MouseOverPopUp.Window.Visible = true
+				end
+			end
+		end, {Title = title, Text = text}, 1*gameSpeed)
+	end
+end
+
+
+function GLOBALS.MouseOverPopUp.Close(this)
+	if this.Window then
+		this.Window:Close()
+		this.Window=nil    
+	end
+end
+
+function GLOBALS.OpenIntro()
+	GLOBALS.IntroMenu:Open()
+end
+
+function GLOBALS.CreateAdvisorButton(data)
+	data = data or {}
+	local Advisor = {}
+	data.Size = data.Size or math.round(256 * GLOBALS.Scale)
+	data.Font = data.Font or GLOBALS.Fonts[18]
+	data.XPos = data.XPos or (Interface:GetScreenWidth() - data.Size)/2
+	local offscreen = (data.XPos - (data.Size/2))<0 or false
+	local function OnClick(Self)
+		if Self.Data and Self.Data.OnClick then
+			Self.Data.OnClick(Self.Data)
+		end
+		-- Play click sound
+	end
+	local function OnMouseOver(Self)
+		if Self and Self.Data then
+			if Self.Data.OnMouseOver then
+				Self.Data.OnMouseOver(Self.Data)
+			end
+			if Self.Data.Name and GLOBALS.IntroMenu and GLOBALS.IntroMenu.Advisors and GLOBALS.IntroMenu.Advisors[Self.Data.Name] then
+				if GLOBALS.IntroMenu.Advisors[Self.Data.Name].Portrait then
+					GLOBALS.IntroMenu.Advisors[Self.Data.Name].Portrait.AnimationIndex = 37 + Interface:Random(3) -- Bow Animation
+				end
+			end
+		end
+		-- Play mouseover sound
+	end
+	local function OnMouseOut(Self)
+		if Self and Self.Data then
+			if Self.Data.OnMouseOut then
+				Self.Data.OnMouseOut(Self.Data)
+			end
+			if Self.Data.Name and GLOBALS.IntroMenu and GLOBALS.IntroMenu.Advisors and GLOBALS.IntroMenu.Advisors[Self.Data.Name] then
+				if GLOBALS.IntroMenu.Advisors[Self.Data.Name].Portrait then
+					GLOBALS.IntroMenu.Advisors[Self.Data.Name].Portrait.AnimationIndex = 1 + Interface:Random(4) -- Idle Animation
+				end
+			end
+		end
+	end
+	Advisor.Window = GUIManager:CreateWindow(
+		data.XPos,data.Size,RelAlign.ToLeft,RelAlign.ToBottom,10,
+		data.Size,data.Size,
+		{},
+		0,0,0,0, -- Backbround rgba
+		1,1,1,0, -- Border rgba
+		false,false,
+		"",
+		1,1,1,1,
+		data.Font,
+		nil,nil,nil,nil,nil
+	)
+	if offscreen then
+		--Interface:DebugOutput(data.Template.." offscreen")
+		Advisor.Portrait=Advisor.Window:CreatePortrait(
+		0,data.Size*1.25,RelAlign.ToLeft,RelAlign.ToBottom,1,	
+		data.Size*2,data.Size*1.25)
+	else
+		Advisor.Portrait=Advisor.Window:CreatePortrait(
+		0,data.Size*1.25,RelAlign.ToCenter,RelAlign.ToBottom,data.Order or 1,	
+		data.Size*2,data.Size*1.25)
+	end
+	
+	--Interface:DebugOutput("Template: "..(data.Template or "?"))
+	Advisor.Portrait.TemplateLinkedTo = data.Template or "Advisor-Marshal"
+	Advisor.Portrait.AnimationIndex = data.Animation or Interface:Random(4)+1 	-- animations 1 to 4 are different Idle animations
+	
+	local buttonWidth = math.round(256 * GLOBALS.Scale)
+	local buttonHeight = math.round(40 * GLOBALS.Scale)
+	Advisor.Label = Advisor.Window:CreateButton(
+		0,buttonHeight,
+		RelAlign.ToCenter,RelAlign.ToBottom,(data.Order or 1) + 1,
+		buttonWidth,buttonHeight,
+		true,
+		{"Art/Interface/MenuButtons",0,0,256,40,false},
+		{"Art/Interface/MenuButtons",0,0,256,40,false},
+		{"Art/Interface/MenuButtons",0,0,256,40,false},
+		{"Art/Interface/MenuButtons",0,0,256,40,false},
+		1,1,1,1,
+		""..(data.Name and GetString("advisor_name_"..Shared.ToLowCase(data.Name)) or " "),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		RelAlign.ToCenter,
+		data.Font,
+		nil,nil,nil,nil
+	)
+	Advisor.Button = Advisor.Window:CreateButton(
+		0,0,
+		RelAlign.ToLeft,RelAlign.ToTop,(data.Order or 1) + 3,
+		data.Size,data.Size,
+		true,
+		{},{},{},{},
+		1,1,1,0,
+		"",			--"\n\n\n\n\n\n\n\n\n"..(data.Text or " "),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		RelAlign.ToCenter,
+		data.Font,
+		OnClick,OnMouseOver,OnMouseOut,data
+	)
+
+	return Advisor
+end
+
+
+
+GLOBALS.CampaignNationWindow = {}
+
+function GLOBALS.CampaignNationWindow.Open(this,nation,faction,cpnID,position)
+	if this.Loaded then		
+		GLOBALS.CampaignNationWindow:Close(true)
+	end
+	GLOBALS.IntroMenu:Close()
+	
+	this.Loaded = true
+		
+	local newNation = false
+	local newFaction = false
+	if (this.Nation or "none") ~= (nation or "Byzantine") then
+		this.Nation = nation or "Byzantine"
+		newNation = true
+		if this.MainPortrait then
+			if this.MainPortrait.Close then
+				this.MainPortrait:Close()
+			end
+		end
+		this.MainPortrait=nil
+		if this.LordPortrait then
+			if this.LordPortrait.Close then
+				this.LordPortrait:Close()
+			end
+		end
+		this.LordPortrait=nil
+		if this.LordButtons then
+			for lord in this.LordButtons do
+				if lord.Close then
+					lord:Close()
+				end
+			end
+		end
+		this.LordButtons = nil		
+		this.LordOverButtons = nil
+	end
+	if position then
+		for pbw in (this.PortraitButtons or {}) do
+			if pbw.Close then
+				pbw:Close()
+			end
+		end
+		this.PortraitButtons = nil
+	end
+	if (this.Faction or "none") ~= (faction or this.Nation.."2") then
+		this.Faction = faction or this.Nation.."2"
+		--Interface:DebugOutput("Faction: "..(this.Faction or "?"))
+		newFaction = true
+		if this.LordPortrait then
+			if this.LordPortrait.Close then
+				this.LordPortrait:Close()
+			end
+		end
+		this.LordPortrait=nil
+	end
+	this.Position = position or this.Position or 1
+	
+	
+	local NationData = {
+		[1] = {Nation="Byzantine", Advisor="Advisor-Byzantine", Texture=1, Name=GetString("nation_byzantine_name"), Desc=GetString("nation_byzantine_desc"), HasBow=true, Capital="constantinople"},
+		[2] = {Nation="Ottoman", Advisor="Advisor-Ottoman", Texture=1, Name=GetString("nation_ottoman_name"), Desc=GetString("nation_ottoman_desc"), HasBow=true, Capital="skoutarion"},
+		[3] = {Nation="Cyprus", Advisor="Advisor-Cyprus", Texture=1, Name=GetString("nation_cyprus_name"), Desc=GetString("nation_cyprus_desc"), HasBow=true, Capital="nicosia"},
+		[4] = {Nation="Anatolian", Advisor="Advisor-Anatolian", Texture=1, Name=GetString("nation_anatolian_name"), Desc=GetString("nation_anatolian_desc"), HasBow=true, Capital="karaman"},
+		[5] = {Nation="StJohn", Advisor="Advisor-StJohn", Texture=1, Name=GetString("nation_stjohn_name"), Desc=GetString("nation_stjohn_desc"), HasBow=true, Capital="rhodes"},
+		[6] = {Nation="Naples", Advisor="Advisor-Naples", Texture=1, Name=GetString("nation_naples_name"), Desc=GetString("nation_naples_desc"), HasBow=true, Capital="naples"},
+		[7] = {Nation="Sicily", Advisor="Advisor-Sicily", Texture=1, Name=GetString("nation_sicily_name"), Desc=GetString("nation_sicily_desc"), HasBow=true, Capital="messina"},
+		[8] = {Nation="Venice", Advisor="Advisor-Venice", Texture=1, Name=GetString("nation_venice_name"), Desc=GetString("nation_venice_desc"), HasBow=true, Capital="venice"},
+		[9] = {Nation="Genoa", Advisor="Advisor-Genoa", Texture=1, Name=GetString("nation_genoa_name"), Desc=GetString("nation_genoa_desc"), HasBow=true, Capital="genoa"},
+		[10] = {Nation="Marinids", Advisor="Advisor-Marinids", Texture=1, Name=GetString("nation_marinids_name"), Desc=GetString("nation_marinids_desc"), HasBow=true, Capital="fez"},	
+		[11] = {Nation="Zayyanids", Advisor="Advisor-Zayyanids", Texture=1, Name=GetString("nation_zayyanids_name"), Desc=GetString("nation_zayyanids_desc"), HasBow=true, Capital="tlemcen"},
+		[12] = {Nation="Hafsids", Advisor="Advisor-Hafsids", Texture=1, Name=GetString("nation_hafsids_name"), Desc=GetString("nation_hafsids_desc"), HasBow=true, Capital="tunis"},
+		[13] = {Nation="Mamluk", Advisor="Advisor-Mamluk", Texture=1, Name=GetString("nation_mamluk_name"), Desc=GetString("nation_mamluk_desc"), HasBow=true, Capital="cairo"},
+		[14] = {Nation="Golden", Advisor="Advisor-Golden", Texture=1, Name=GetString("nation_golden_name"), Desc=GetString("nation_golden_desc"), HasBow=true, Capital="bolghar"},	
+		[15] = {Nation="Novgorod", Advisor="Advisor-Novgorod", Texture=1, Name=GetString("nation_novgorod_name"), Desc=GetString("nation_novgorod_desc"), HasBow=true, Capital="novgorod"},	
+		[16] = {Nation="Smolensk", Advisor="Advisor-Smolensk", Texture=1, Name=GetString("nation_smolensk_name"), Desc=GetString("nation_smolensk_desc"), HasBow=true, Capital="smolensk"},	
+		[17] = {Nation="Chernigov", Advisor="Advisor-Chernigov", Texture=1, Name=GetString("nation_chernigov_name"), Desc=GetString("nation_chernigov_desc"), HasBow=true, Capital="chernigov"},
+		[18] = {Nation="Pereyaslavl", Advisor="Advisor-Pereyaslavl", Texture=1, Name=GetString("nation_pereyaslavl_name"), Desc=GetString("nation_pereyaslavl_desc"), HasBow=true, Capital="pereyaslavl"},
+		[19] = {Nation="Kiev", Advisor="Advisor-Kiev", Texture=1, Name=GetString("nation_kiev_name"), Desc=GetString("nation_kiev_desc"), HasBow=true, Capital="kiev"},				
+		[20] = {Nation="Moskovy", Advisor="Advisor-Moskovy", Texture=1, Name=GetString("nation_moskovy_name"), Desc=GetString("nation_moskovy_desc"), HasBow=true, Capital="moscow"},
+		[21] = {Nation="Ryazan", Advisor="Advisor-Ryazan", Texture=1, Name=GetString("nation_ryazan_name"), Desc=GetString("nation_ryazan_desc"), HasBow=true, Capital="ryazan"},
+		[22] = {Nation="Tver", Advisor="Advisor-Tver", Texture=1, Name=GetString("nation_tver_name"), Desc=GetString("nation_tver_desc"), HasBow=true, Capital="tverkashin"},
+		[23] = {Nation="Rostov", Advisor="Advisor-Rostov", Texture=1, Name=GetString("nation_rostov_name"), Desc=GetString("nation_rostov_desc"), HasBow=true, Capital="rostov"},
+		[24] = {Nation="Beloozero", Advisor="Advisor-Beloozero", Texture=1, Name=GetString("nation_beloozero_name"), Desc=GetString("nation_beloozero_desc"), HasBow=true, Capital="beloozero"},
+		[25] = {Nation="Moldavia", Advisor="Advisor-Moldavia", Texture=1, Name=GetString("nation_moldavia_name"), Desc=GetString("nation_moldavia_desc"), HasBow=true, Capital="Cetateaalba"},			
+		[26] = {Nation="Portugal", Advisor="Advisor-Portugal", Texture=1, Name=GetString("nation_portugal_name"), Desc=GetString("nation_portugal_desc"), HasBow=true, Capital="lisbon"},
+		[27] = {Nation="Ireland", Advisor="Advisor-Ireland", Texture=1, Name=GetString("nation_ireland_name"), Desc=GetString("nation_ireland_desc"), HasBow=true, Capital="dublin"},
+		[28] = {Nation="Serbia", Advisor="Advisor-Serbia", Texture=1, Name=GetString("nation_serbia_name"), Desc=GetString("nation_serbia_desc"), HasBow=true, Capital="skopje"},			
+		[29] = {Nation="Spain", Advisor="Advisor-Spain", Texture=1, Name=GetString("nation_spain_name"), Desc=GetString("nation_spain_desc"), HasBow=true, Capital="madrid"},
+		[30] = {Nation="Bulgaria", Advisor="Advisor-Bulgaria", Texture=1, Name=GetString("nation_bulgaria_name"), Desc=GetString("nation_bulgaria_desc"), HasBow=true, Capital="varna"},			
+		[31] = {Nation="England", Advisor="Advisor-England", Texture=1, Name=GetString("nation_england_name"), Desc=GetString("nation_england_desc"), HasBow=true, Capital="london"},
+		[32] = {Nation="Wallachia", Advisor="Advisor-Wallachia", Texture=1, Name=GetString("nation_wallachia_name"), Desc=GetString("nation_wallachia_desc"), HasBow=true, Capital="Curteadearges"},		
+		[33] = {Nation="France", Advisor="Advisor-France", Texture=1, Name=GetString("nation_france_name"), Desc=GetString("nation_france_desc"), HasBow=true, Capital="paris"},
+		[34] = {Nation="Galicia", Advisor="Advisor-Galicia", Texture=1, Name=GetString("nation_galicia_name"), Desc=GetString("nation_galicia_desc"), HasBow=true, Capital="volodymyr"},	
+		[35] = {Nation="Burgundy", Advisor="Advisor-Burgundy", Texture=1, Name=GetString("nation_burgundy_name"), Desc=GetString("nation_burgundy_desc"), HasBow=true, Capital="dijon"},
+		[36] = {Nation="Lithuania", Advisor="Advisor-Lithuania", Texture=1, Name=GetString("nation_lithuania_name"), Desc=GetString("nation_lithuania_desc"), HasBow=true, Capital="vilnius"},
+		[37] = {Nation="HRE", Advisor="Advisor-HRE", Texture=1, Name=GetString("nation_hre_name"), Desc=GetString("nation_hre_desc"), HasBow=true, Capital="frankfurt"},
+		[38] = {Nation="Denmark", Advisor="Advisor-Denmark", Texture=1, Name=GetString("nation_denmark_name"), Desc=GetString("nation_denmark_desc"), HasBow=true, Capital="aarhus"},
+		[39] = {Nation="Austria", Advisor="Advisor-Austria", Texture=1, Name=GetString("nation_austria_name"), Desc=GetString("nation_austria_desc"), HasBow=true, Capital="vienna"},
+		[40] = {Nation="Poland", Advisor="Advisor-Poland", Texture=1, Name=GetString("nation_poland_name"), Desc=GetString("nation_poland_desc"), HasBow=true, Capital="krakow"},		
+		[41] = {Nation="Scotland", Advisor="Advisor-Scotland", Texture=1, Name=GetString("nation_scotland_name"), Desc=GetString("nation_scotland_desc"), HasBow=true, Capital="glasgow"},
+		[42] = {Nation="Papacy", Advisor="Advisor-Papacy", Texture=1, Name=GetString("nation_papacy_name"), Desc=GetString("nation_papacy_desc"), HasBow=true, Capital="avignon"},
+		[43] = {Nation="Aragon", Advisor="Advisor-Aragon", Texture=1, Name=GetString("nation_aragon_name"), Desc=GetString("nation_aragon_desc"), HasBow=true, Capital="zaragoza"},
+		[44] = {Nation="Sweden", Advisor="Advisor-Sweden", Texture=1, Name=GetString("nation_sweden_name"), Desc=GetString("nation_sweden_desc"), HasBow=true, Capital="stockholm"},
+		[45] = {Nation="Bohemia", Advisor="Advisor-Bohemia", Texture=1, Name=GetString("nation_bohemia_name"), Desc=GetString("nation_bohemia_desc"), HasBow=true, Capital="prague"},
+		[46] = {Nation="Teutonic", Advisor="Advisor-Teutonic", Texture=1, Name=GetString("nation_teutonic_name"), Desc=GetString("nation_teutonic_desc"), HasBow=true, Capital="gdansk"},
+		[47] = {Nation="Granada", Advisor="Advisor-Granada", Texture=1, Name=GetString("nation_granada_name"), Desc=GetString("nation_granada_desc"), HasBow=true, Capital="granada"},	
+		[48] = {Nation="Hungary", Advisor="Advisor-Hungary", Texture=1, Name=GetString("nation_hungary_name"), Desc=GetString("nation_hungary_desc"), HasBow=true, Capital="buda"},		
+	}
+	
+	local FactionData = GLOBALS.Lords and GLOBALS.Lords[this.Nation] and GLOBALS.Lords[this.Nation][this.Faction and number.from(string.right(this.Faction,1))] or {}
+	
+	local currentNation = NationData[1]
+	for pos,data in table.pair(NationData) do
+		if data.Nation == this.Nation then
+			currentNation = NationData[pos]
+			break
+		end
+	end
+	
+	Command:EnableTrigger("ChangeScene","WorldMap",Shared.ToLowCase(FactionData.holdings and FactionData.holdings[1] or currentNation.Capital or "london"))
+	Interface:AddTimedEvent(function()
+		Interface:SetViewHover(SETTINGS.WORLDMAP_VIEWHOVERMAX or 2500)
+	end, nil, 0.5)
+	CallBack.ShowWorldMapBanners()
+	
+	local titleFont = GLOBALS.Fonts[24]
+	local textFont = GLOBALS.Fonts[16]
+	local buttonFont = GLOBALS.Fonts[16]
+			
+	this.BlockWindow=GUIManager:CreateWindow(
+		0,0,RelAlign.ToLeft,RelAlign.ToTop,50,
+		Interface:GetScreenWidth(),Interface:GetScreenHeight(),
+		{},
+		0,0,0,0,
+		0,0,0,0,
+		false,false,
+		"",
+		1,1,1,1,
+		buttonFont,
+		nil,nil,nil,nil,
+		nil
+	)
+	
+	local function OnWindowClose(Self)
+		if this.BlockWindow and this.BlockWindow.Close then
+			this.BlockWindow:Close()
+		end
+		this.BlockWindow=nil
+	end
+	
+	
+	local nationCount = table.count(NationData)
+	local maxShow = 7
+	local buttonHeight = math.round(GLOBALS.Scale * 40)
+	local buttonWidth = math.round(GLOBALS.Scale * 256)
+	
+	local iconSize = math.round(GLOBALS.Scale * 128)
+	local portraitButtonSize = math.round(GLOBALS.Scale * 320)
+	local portraitSize = math.round(GLOBALS.Scale * 384)
+	local lordPortraitSize = math.round(GLOBALS.Scale * 192)
+	
+	if (Interface:GetScreenWidth() or Interface:GetScreenWidth()) < ((2*iconSize) + (maxShow*portraitButtonSize)) then
+		iconSize = math.round(GLOBALS.Scale * 96)
+		portraitButtonSize = math.round(GLOBALS.Scale * 288)
+		portraitSize = math.round(GLOBALS.Scale * 320)
+	end
+	if (Interface:GetScreenWidth() or Interface:GetScreenWidth()) < ((2*iconSize) + (maxShow*portraitButtonSize)) then
+		iconSize = math.round(GLOBALS.Scale * 64)
+		portraitButtonSize = math.round(GLOBALS.Scale * 240)
+		portraitSize = math.round(GLOBALS.Scale * 288)
+	end
+	while (Interface:GetScreenWidth() or Interface:GetScreenWidth()) < ((2*iconSize) + (maxShow*portraitButtonSize)) do
+		maxShow = maxShow-1
+	end
+	local margin = math.round(GLOBALS.Scale * 16)
+
+	local windowWidth = math.round(6*lordPortraitSize + (20*margin))
+	
+	local MainPortrait_size = (windowWidth - (4*margin))/4	-- lordPortraitSize
+	
+	local windowHeight = math.ceil(lordPortraitSize + (3*buttonHeight) + (10*margin) + MainPortrait_size)			-- math.round(lordPortraitSize + (4*buttonHeight) + (6*margin))
+
+	-- Create Window
+	this.Window=GUIManager:CreateWindow(
+		0,(Interface:GetScreenHeight()-windowHeight)/4,
+		RelAlign.ToCenter,RelAlign.ToTop,60,
+		windowWidth,windowHeight,
+		{},
+		1,1,1,1,
+		1,1,1,1,
+		false,false,
+		"",
+		1,1,1,1,
+		buttonFont,
+		nil,nil,nil,nil,
+		OnWindowClose
+	)
+	
+	local artPath = "Art/Interface/"
+	this.Window.InteriorTexture={artPath.."MessageBoxBkg",0,0,256,128,true}
+	this.Window.TopEdgeTexture={artPath.."MessageBoxBrdHorz",0,0,128,6}
+	this.Window.BottomEdgeTexture={artPath.."MessageBoxBrdHorz",0,6,128,12}
+	this.Window.LeftEdgeTexture={artPath.."MessageBoxBrdVert",0,0,6,128}
+	this.Window.RightEdgeTexture={artPath.."MessageBoxBrdVert",6,0,12,128}
+	this.Window.TopLeftCornerTexture={artPath.."MessageBoxCrn",0,0,16,16}
+	this.Window.TopRightCornerTexture={artPath.."MessageBoxCrn",16,0,32,16}
+	this.Window.BottomLeftCornerTexture={artPath.."MessageBoxCrn",0,16,16,32}
+	this.Window.BottomRightCornerTexture={artPath.."MessageBoxCrn",16,16,32,32}
+	
+	local wx,wy = this.Window:GetAbsolutePosition(RelAlign.ToLeft, RelAlign.ToTop)
+	--Interface:DebugOutput("wx: "..wx..", wy: "..wy)
+	
+	this.Window:CreateStaticImage(
+		0,0 - iconSize/2,
+		RelAlign.ToCenter,RelAlign.ToTop,3,
+		iconSize,iconSize,
+		{"Art/Icons/Heraldry/"..this.Nation,0,0,256,256},
+		1,1,1,1,
+		false, -- centre on origin
+		0
+	)
+				
+	local y = margin
+	--[[
+	local textToShow = " "..GetString("intromenu_campaign").." "
+	local textWidth = titleFont:GetTextWidth(textToShow)
+	this.Window:CreateStaticText(
+		0,margin,
+		RelAlign.ToCenter,RelAlign.ToTop,
+		10,textWidth,
+		textToShow,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		titleFont
+	)
+	]]
+	y += buttonHeight + margin
+
+	local portraitTable = {
+		Template = currentNation.Advisor,
+		Mesh = 2,
+		Label = currentNation.Name,
+		Background = true
+	}
+
+    -- Draw Main Portrait
+	local MainPortrait_x = wx + margin
+	local MainPortrait_y = wy + y
+	this.MainPortrait = this.MainPortrait or GLOBALS.CreatePortrait(portraitTable, MainPortrait_x, MainPortrait_y, MainPortrait_size)
+	
+	local portraitTable = {
+		Template = FactionData.portrait or currentNation.Advisor,
+		Mesh = 1,
+		Animation = 1,
+		Label = FactionData.name and GetString(FactionData.name) or currentNation.Name,
+		Background = true
+	}
+	
+	MainPortrait_x = wx + windowWidth - margin - MainPortrait_size
+	this.LordPortrait = this.LordPortrait or GLOBALS.CreatePortrait(portraitTable, MainPortrait_x, MainPortrait_y, MainPortrait_size)
+	
+	local fontHeight = textFont:GetTextHeight()
+	local lines = math.floor(MainPortrait_size/fontHeight) - 5
+	local textWidth = 2*MainPortrait_size	-- windowWidth - (2*lordPortraitSize) - (4*margin)
+	
+	local desc = currentNation.Desc or ""
+	
+	local descFaction = ""
+	if FactionData then
+		if FactionData.holdings then
+			descFaction = GetString("campaign_starts_with").." "
+			for holding in FactionData.holdings do
+				if GLOBALS.CityData[holding] and GLOBALS.CityData[holding].Name then
+					descFaction = descFaction..GetString(GLOBALS.CityData[holding] and GLOBALS.CityData[holding].Name)
+					if (GLOBALS.CityData[holding].Strength or 0) > 5 then
+						descFaction = descFaction.." ("..GetString("city")..")"
+					end
+					descFaction = descFaction..", "
+				end
+			end
+			descFaction = string.left(descFaction, string.length(descFaction) - 2).."\n"
+		end
+		if FactionData.renown then
+			descFaction = descFaction..GetString("profile_window_renown")..": "..FactionData.renown.."\n"
+		end
+		if FactionData.standing then
+			descFaction = descFaction..GetString("profile_window_standing")..": "..FactionData.standing.."\n"
+		end
+	end
+	
+	local textX = MainPortrait_size + 2*margin
+	local textDisplay = this.Window:CreateMultilineEdit( 
+		textX,y,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		textWidth,lines,
+		0.1,0.1,0.1,0.5,	-- background colour
+		0.5,0.5,0.5,0.5,	-- border colour
+		0.5,0.5,0.5,0.5, 	-- scroll bar colour
+		desc,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		textFont
+	)
+	textDisplay.InputLocked = true
+	
+	local yTemp = y
+	y += textDisplay.Height + fontHeight
+	
+	local textDisplay = this.Window:CreateMultilineEdit( 
+		textX,y,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		textWidth,3,
+		0.1,0.1,0.1,0.5,	-- background colour
+		0.5,0.5,0.5,0.5,	-- border colour
+		0.5,0.5,0.5,0.5, 	-- scroll bar colour
+		descFaction or "",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		textFont
+	)
+	textDisplay.InputLocked = true
+	
+	y += textDisplay.Height + margin
+	
+	y = math.max(y, yTemp + MainPortrait_size + margin)
+	
+	local textToShow = GetString("campaign_difficulty")..": "
+	local textWidth = buttonFont:GetTextWidth(textToShow)
+	this.Window:CreateStaticText(
+		margin,y,
+		RelAlign.ToLeft,RelAlign.ToTop,1,
+		textWidth,textToShow,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		buttonFont
+	)
+	
+	this.CampaignDifficulty=this.Window:CreateDropBox(
+		margin*3 + portraitSize/2,y,
+		RelAlign.ToLeft,RelAlign.ToTop,1,
+		portraitSize/2,
+		0,0,0,0.7,
+		0,0,0,0.8,
+		1,1,1,1,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	-- text colour
+		buttonFont
+	)	
+	local textToShow = GetString("campaign_battle_difficulty")..": "
+	local textWidth = buttonFont:GetTextWidth(textToShow)
+	this.Window:CreateStaticText(
+		margin + portraitSize,y,
+		RelAlign.ToRight,RelAlign.ToTop,1,
+		textWidth,textToShow,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		buttonFont
+	)
+	
+	this.BattleDifficulty=this.Window:CreateDropBox(
+		margin + portraitSize/2,y,
+		RelAlign.ToRight,RelAlign.ToTop,1,
+		portraitSize/2,
+		0,0,0,0.7,
+		0,0,0,0.8,
+		1,1,1,1,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	-- text colour
+		buttonFont
+	)
+		
+	local Difficulty = {
+		[1] = GetString("kingdom_wars_difficulties_easy"),
+		[2] = GetString("kingdom_wars_difficulties_medium"),
+		[3] = GetString("kingdom_wars_difficulties_hard"),
+	}
+	
+	for difficulty, label in table.pair(Difficulty) do
+		this.CampaignDifficulty:AddEntry(label,difficulty)
+		this.BattleDifficulty:AddEntry(label,difficulty)
+	end
+	
+	this.CampaignDifficulty.OnSelectionChanged = function(Self)
+		local Text, Value = Self:GetSelectedEntry()
+		
+		this.LastCampaignDifficulty = Value or 2
+	end
+	
+	this.BattleDifficulty.OnSelectionChanged = function(Self)
+		local Text, Value = Self:GetSelectedEntry()
+		
+		this.LastBattleDifficulty = Value or 2
+	end
+	
+	this.CampaignDifficulty.SelectedEntry = Difficulty[this.LastCampaignDifficulty or 2]
+	this.BattleDifficulty.SelectedEntry = Difficulty[this.LastBattleDifficulty or 2]
+	
+	
+	this.ChillMode = this.Window:CreateCheckBox(
+		margin + buttonHeight + (windowWidth - buttonWidth)/2,y,
+		RelAlign.ToLeft,RelAlign.ToTop,1,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		0,0,0,1,
+		GetString("chill_mode_name"),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		buttonFont
+	)
+	--this.ChillMode.Checked = false
+	local chillY = y + buttonHeight
+	local function ChillModeHelpOpen(Self,Info)
+		GLOBALS.MouseOverPopUp:Open(wx + (windowWidth - buttonWidth)/2, wy + chillY , GetString("chill_mode_name"), GetString("chill_mode_description"))
+	end
+	local function ChillModeHelpClose(Self,Info)
+		GLOBALS.MouseOverPopUp:Close()
+	end
+	
+	local Path = "Art/interface/Chat/Tabs"
+	this.Window:CreateButton(
+		(windowWidth - buttonWidth/1.3)/2,y,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		buttonHeight/2,buttonHeight/2,
+		true,
+		{Path,0,0,64,32},
+		{Path,0,32,64,32},
+		{Path,0,64,64,32},
+		{Path,0,0,64,32},
+		1,1,1,1,		-- 0.25,0.125,0,1,
+		"?",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		RelAlign.ToCenter,
+		buttonFont,
+		nil,ChillModeHelpOpen,ChillModeHelpClose,nil
+	)
+	
+	
+	y += buttonHeight 	-- + margin 
+	----
+	this.UndeadMode = this.Window:CreateCheckBox(
+		margin + buttonHeight + (windowWidth - buttonWidth)/2,y,
+		RelAlign.ToLeft,RelAlign.ToTop,1,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		0,0,0,1,
+		GetString("undead_mode_name"),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		buttonFont
+	)
+	--this.UndeadMode.Checked = false
+	local UndeadY = y + buttonHeight
+	local function UndeadModeHelpOpen(Self,Info)
+		GLOBALS.MouseOverPopUp:Open(wx + (windowWidth - buttonWidth)/2, wy + UndeadY , GetString("undead_mode_name"), GetString("undead_mode_description"))
+	end
+	local function UndeadModeHelpClose(Self,Info)
+		GLOBALS.MouseOverPopUp:Close()
+	end
+	
+	local Path = "Art/interface/Chat/Tabs"
+	this.Window:CreateButton(
+		(windowWidth - buttonWidth/1.3)/2,y,
+		RelAlign.ToLeft,RelAlign.ToTop,2,
+		buttonHeight/2,buttonHeight/2,
+		true,
+		{Path,0,0,64,32},
+		{Path,0,32,64,32},
+		{Path,0,64,64,32},
+		{Path,0,0,64,32},
+		1,1,1,1,		-- 0.25,0.125,0,1,
+		"?",
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		RelAlign.ToCenter,
+		buttonFont,
+		nil,UndeadModeHelpOpen,UndeadModeHelpClose,nil
+	)
+	
+	
+	
+	
+	y += buttonHeight 	-- + margin 
+	
+	local function OnStartCampaign(Self,Info)		
+		if cpnID then
+			set_local_saved_data("Campaign"..cpnID, "Nation", this.Nation)
+			if this.Faction then
+				set_local_saved_data("Campaign"..cpnID, "Faction", this.Faction)
+			end
+			GLOBALS.CampaignData = GLOBALS.CampaignData or {}
+			GLOBALS.CampaignData.ID = cpnID
+			Command:SetGameValue("CampaignID",cpnID)
+			
+			local diffName,difficulty = this.CampaignDifficulty:GetSelectedEntry()
+			set_local_saved_data("Campaign"..cpnID, "CampaignDifficulty", difficulty) 
+			
+			local diffName,difficulty = this.BattleDifficulty:GetSelectedEntry()
+			set_local_saved_data("Campaign"..cpnID, "BattleDifficulty", difficulty) 
+			
+			set_local_saved_data("Campaign"..cpnID, "ChillMode", this.ChillMode and this.ChillMode.Checked or false)
+			
+			set_local_saved_data("Campaign"..cpnID, "UndeadMode", this.UndeadMode and this.UndeadMode.Checked or false)
+		end
+		SetGameMode("CPN-Map")
+		GLOBALS.NoCityClickers = true
+		
+		GLOBALS.CampaignNationWindow:Close()		
+		GLOBALS.IntroMenu:Close()
+		MenuCommonFunctions.TimedLoadScenario("Levels/Campaign Map.dofscn", nil, 3, nil)
+
+	end
+	 
+	local startButton = this.Window:CreateButton(
+		0,y,
+		RelAlign.ToCenter,RelAlign.ToTop,4,
+		buttonWidth,buttonHeight,
+		true,
+		{"Art/Interface/MenuButtons",0,0,256,40,false},
+		{"Art/Interface/MenuButtons",0,40,256,80,false},
+		{"Art/Interface/MenuButtons",0,80,256,120,false},
+		{"Art/Interface/MenuButtons",0,120,256,160,false},
+		1,1,1,1,
+		GetString("campaign_start"),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		RelAlign.ToCenter,
+		buttonFont,
+		OnStartCampaign,nil,nil,nil
+	)
+	
+	y += buttonHeight + margin
+	
+	local function OnClickLord(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnClick is called "..(Self.Data and Self.Data.Faction or "faction?"))
+		for pos,button in table.pair(this.LordOverButtons or {}) do
+			if pos==(Self.Data and Self.Data.Pos or 0) then
+				button.StuckDown = true
+			else
+				button.StuckDown = false
+			end
+		end
+		GLOBALS.CampaignNationWindow:Open(this.Nation, Self.Data and Self.Data.Faction, Self.Data and Self.Data.CpnID)
+	end
+	
+	-- LORDS
+	if not this.LordButtons and this.Nation and GLOBALS.Lords and GLOBALS.Lords[this.Nation] then	
+		local tableOfLords = {}
+		for pos,data in table.pair(GLOBALS.Lords[this.Nation]) do
+			if not data.isKing and pos~=1 then
+				tableOfLords[pos] = table.copy(data or {})
+				tableOfLords[pos].faction = this.Nation..pos
+			end
+		end
+		
+		local lordCount = table.count(tableOfLords)
+		local xBase = (Interface:GetScreenWidth()/2) - ((lordCount * lordPortraitSize)/2) - (((lordCount-1) * margin)/2)
+		
+		this.LordButtons = {}
+		this.LordOverButtons = {}
+		for pos,data in table.pair(tableOfLords) do
+			Interface:DebugOutput(""..(pos or "pos?"))
+			local portraitTable = {
+				Template = data.portrait,
+				Mesh = 1,
+				Animation = 1,
+				Texture = 1,
+				Label = data.name and GetString(data.name) or nil,
+				Background = true,
+				Depth=61,
+				Font = GLOBALS.Fonts[12],
+			}
+						
+			local xPos = xBase + ((pos-2) * (lordPortraitSize + margin))							
+			
+			local lordWindow,lordButton = GLOBALS.CreatePortrait(portraitTable, xPos, wy + y, lordPortraitSize, OnClickLord, nil, nil, {Pos=pos,HasBorder=true,Faction=data.faction or this.Nation..pos, Anim = portraitTable.Animation, CpnID = cpnID, HasBow=data.HasBow or nil})
+			this.LordButtons[pos] = lordWindow
+			this.LordOverButtons[pos] = lordButton
+			if (this.Faction or "?")==(data.faction or "x") then
+				lordButton.StuckDown = true
+			end
+		end
+	end
+	
+	--[[
+	this.IncludeTutorialCB=this.Window:CreateCheckBox(
+		(windowWidth-buttonWidth)/2,margin,
+		RelAlign.ToLeft,RelAlign.ToBottom,4,
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		0,0,0,1,
+		GetString("tutorial_prologue"),
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+		buttonFont
+	)
+	this.IncludeTutorialCB.Checked = true
+	]]
+	
+	local count = 0
+	local function OnClick(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnClick is called")
+		GLOBALS.CampaignNationWindow:Open(Self.Data and Self.Data.Nation,nil,Self.Data and Self.Data.CpnID)
+	end
+	
+	local function OnMouseOver(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnMouseOver is called")
+		
+		if Self and Self.Data and Self.Data.Portrait and Self.Data.HasBow then
+			local Anim = 37 + Interface:Random(3) -- Bow Animation
+			
+			Self.Data.Portrait.AnimationIndex = Anim		
+		end
+	end
+	
+	local function OnMouseOut(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnMouseOut is called")
+		
+		if Self and Self.Data and Self.Data.Portrait then
+			local Anim = Self.Data.Anim or Interface:Random(4)+1
+			
+			Self.Data.Portrait.AnimationIndex = Anim
+		end
+	end
+	
+	local yPos = Interface:GetScreenHeight() - portraitButtonSize
+	local xBase = ((Interface:GetScreenWidth() - (maxShow * (portraitButtonSize + margin)) + margin)/2)
+	
+	local Positions = {}
+	for i=1,maxShow do
+		local position = this.Position + (i - 1)
+		if position > nationCount then
+			position = position - nationCount
+		end
+		Positions[position] = i - 1
+	end
+	
+	if not this.PortraitButtons then
+		this.PortraitButtons = {}
+		for pos,data in table.pair(NationData) do
+			if Positions[pos] then
+				local portraitTable = {
+					Template = data.Advisor,
+					Mesh = 1,
+					Animation = math.mod(pos,4)+1,	--Interface:Random(4)+1
+					Texture = 1,	-- set to nation's texture, change when advisors updated
+					Label = data.Name,
+					Wide = true,	-- widens the portrait so doesn't cut off when gesturing
+					Depth = 55,
+				}
+							
+				local xPos = xBase + (Positions[pos] * (portraitButtonSize + margin))							
+				
+				this.PortraitButtons[table.count(this.PortraitButtons) + 1]	= GLOBALS.CreatePortrait(portraitTable, xPos, yPos, portraitButtonSize, OnClick, OnMouseOver, OnMouseOut, {Nation = data.Nation, Anim = portraitTable.Animation, CpnID = cpnID, HasBow=data.HasBow or nil})
+			end
+		end
+	end
+	
+	-- Arrows	
+	local function OnClickLeft(Self,Info)
+		this.Position = this.Position - maxShow
+		if this.Position < 1 then
+			this.Position = this.Position + nationCount
+		end
+		GLOBALS.CampaignNationWindow:Open(this.Nation,nil,cpnID,this.Position)
+	end
+	
+	local function OnClickRight(Self,Info)
+		this.Position = this.Position + maxShow
+		if this.Position > nationCount then
+			this.Position = this.Position - nationCount
+		end
+		GLOBALS.CampaignNationWindow:Open(this.Nation,nil,cpnID,this.Position)
+	end
+	
+	this.BlockWindow:CreateButton(
+		0,iconSize*1.5,
+		RelAlign.ToLeft,RelAlign.ToBottom,10,
+		iconSize,iconSize,
+		true, 
+		{"Art/Interface/Btn_Left",0,0,128,128}, -- enabled
+		{"Art/Interface/Btn_Left",128,0,256,128}, -- clicked
+		{"Art/Interface/Btn_Left",0,128,128,256}, -- mouseover
+		{"Art/Interface/Btn_Left",128,128,256,256}, -- disabled
+		1,1,1,1,
+		"", 
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+		RelAlign.ToCenter,
+		buttonFont,
+		OnClickLeft,nil,nil,nil
+	)
+	
+	this.BlockWindow:CreateButton(
+		iconSize,iconSize*1.5,
+		RelAlign.ToRight,RelAlign.ToBottom,10,
+		iconSize,iconSize,
+		true, 
+		{"Art/Interface/Btn_Right",0,0,128,128}, -- enabled
+		{"Art/Interface/Btn_Right",128,0,256,128}, -- clicked
+		{"Art/Interface/Btn_Right",0,128,128,256}, -- mouseover
+		{"Art/Interface/Btn_Right",128,128,256,256}, -- disabled
+		1,1,1,1,
+		"", 
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+		RelAlign.ToCenter,
+		buttonFont,
+		OnClickRight,nil,nil,nil
+	)
+
+	local function CloseButtonPushed(Self,Info)
+		GLOBALS.CampaignNationWindow:Close()
+		CallBack.HideWorldMapBanners()
+		Command:EnableTrigger("ChangeScene","Men")
+		--GLOBALS.IntroMenu:Open()
+		GLOBALS.CampaignSelectionWindow:Open()
+	end
+	
+	this.IconSize = math.round(GLOBALS.Scale * 64)
+	-- Back button
+	this.BlockWindow:CreateButton(
+		this.IconSize,0,
+		RelAlign.ToRight,RelAlign.ToTop,1,
+		this.IconSize,this.IconSize,
+		true, 
+		{"Art/Interface/Btn_Back",0,0,128,128}, -- enabled
+		{"Art/Interface/Btn_Back",128,0,256,128}, -- clicked
+		{"Art/Interface/Btn_Back",0,128,128,256}, -- mouseover
+		{"Art/Interface/Btn_Back",128,128,256,256}, -- disabled
+		1,1,1,1,
+		"", 
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+		RelAlign.ToCenter,
+		GLOBALS.Fonts[16],
+		CloseButtonPushed,nil,nil,nil
+	)
+			
+end
+
+function GLOBALS.CampaignNationWindow.Close(this, isRefresh)
+	if not this.Loaded then
+		return
+	end
+	this.Loaded=false
+	if not isRefresh then
+		for pbw in (this.PortraitButtons or {}) do
+			if pbw.Close then
+				pbw:Close()
+			end
+		end
+		if this.MainPortrait then
+			if this.MainPortrait.Close then
+				this.MainPortrait:Close()
+			end
+		end
+		if this.LordPortrait then
+			if this.LordPortrait.Close then
+				this.LordPortrait:Close()
+			end
+		end
+		if this.LordButtons then
+			for lord in this.LordButtons do
+				if lord.Close then
+					lord:Close()
+				end
+			end
+		end
+		this.PortraitButtons = nil
+		this.MainPortrait=nil
+		this.LordPortrait=nil
+		this.LordButtons = nil
+		this.Nation = nil
+		this.Faction = nil
+	end
+	if this.Window then
+		if this.Window.Close then
+			this.Window:Close()
+		end
+		this.Window=nil
+	end
+	if this.BlockWindow then
+		if this.BlockWindow.Close then
+			this.BlockWindow:Close()
+		end
+		this.BlockWindow=nil
+	end
+end
+
+
+GLOBALS.CampaignSelectionWindow = {}
+
+function GLOBALS.CampaignSelectionWindow.Open(this)
+	if this.Loaded then
+		return
+	end
+	GLOBALS.IntroMenu:Close()
+	
+	CallBack.HideWorldMapBanners()
+	
+	local buttonFont = GLOBALS.Fonts[16]
+			
+	this.Window=GUIManager:CreateWindow(
+		0,0,RelAlign.ToLeft,RelAlign.ToTop,50,
+		Interface:GetScreenWidth(),Interface:GetScreenHeight(),
+		{},
+		0,0,0,0,
+		0,0,0,0,
+		false,false,
+		"",
+		1,1,1,1,
+		buttonFont,
+		nil,nil,nil,nil,
+		nil
+	)
+	
+	local function CloseButtonPushed(Self,Info)
+		GLOBALS.CampaignLoadWindow:Close()
+		GLOBALS.CampaignSelectionWindow:Close()
+		CallBack.HideWorldMapBanners()
+		GLOBALS.IntroMenu:Open()
+	end
+	
+	this.IconSize = math.round(GLOBALS.Scale * 64)
+	-- Back button
+	this.Window:CreateButton(
+		this.IconSize,0,
+		RelAlign.ToRight,RelAlign.ToTop,1,
+		this.IconSize,this.IconSize,
+		true, 
+		{"Art/Interface/Btn_Back",0,0,128,128}, -- enabled
+		{"Art/Interface/Btn_Back",128,0,256,128}, -- clicked
+		{"Art/Interface/Btn_Back",0,128,128,256}, -- mouseover
+		{"Art/Interface/Btn_Back",128,128,256,256}, -- disabled
+		1,1,1,1,
+		"", 
+		GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+		RelAlign.ToCenter,
+		buttonFont,
+		CloseButtonPushed,nil,nil,nil
+	)
+	this.Loaded = true
+	
+	GLOBALS.CampaignLoadWindow:Open(true,true)
+	
+	--[[
+	
+	this.PortraitButtons = {}
+
+	
+	local function DeleteButtonPushed(Self,Info)
+		--Interface:DebugOutput("DeleteButtonPushed called")
+		if Self.Data and Self.Data.CpnID then
+		
+			local function ChooseOption(choice)
+				if choice==1 then
+					GLOBALS.CampaignSelectionWindow:Close()
+					local cpnID = Self.Data.CpnID or 0
+					remove_local_saved_data_file("Campaign"..cpnID)
+					
+					Interface:AddTimedEvent(function()
+						set_local_saved_data("Campaign"..cpnID,"Initialized",false)
+					end,nil,0.25)
+					Interface:AddTimedEvent(function()
+						GLOBALS.CampaignSelectionWindow:Open()
+					end,nil,0.5)
+				end
+			end
+			
+			GLOBALS.ButtonListWindow:Open("Do you wish to delete this campaign?",{GetString("button_ok"),GetString("button_cancel")},ChooseOption)
+		else
+			Interface:DebugOutput("No CpnID")
+		end
+	end
+	
+	local function OnClickNew(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnClick is called")
+		GLOBALS.CampaignSelectionWindow:Close()
+		GLOBALS.CampaignNationWindow:Open(nil,nil,Self.Data and Self.Data.CpnID)
+	end
+	
+	local function OnClickLoad(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnClick is called")
+		GLOBALS.CampaignSelectionWindow:Close()
+		GLOBALS.IntroMenu:Close()
+		
+		GLOBALS.CampaignData = {}
+		local cpnID = Self.Data and Self.Data.CpnID or 0
+		GLOBALS.CampaignData.ID = cpnID
+		Command:SetGameValue("CampaignID", cpnID)
+		
+		local SavedBattleData = get_local_saved_data("Campaign"..cpnID, "BattleData") or nil
+		if ScenarioExists("Campaign"..cpnID..".dofsav") and SavedBattleData then
+			-- Continue saved game
+			SetGameMode("CPN-Skirmish")			
+			Command:SetGameValue("BattleData",SavedBattleData)
+			Command:SetGameValue("IsCampaignReload", true)
+			Command:SetGameValue("CurCity", get_local_saved_data("Campaign"..cpnID, "CurCity"))
+			GLOBALS.CampaignData.CurCity = get_local_saved_data("Campaign"..cpnID, "CurCity")
+			GLOBALS.CampaignData.PlayerArmyID = get_local_saved_data("Campaign"..cpnID, "PlayerArmyID")
+			GLOBALS.CampaignData.AIArmyID = get_local_saved_data("Campaign"..cpnID, "AIArmyID")
+			GLOBALS.CampaignData.PlayerSupportArmyID = get_local_saved_data("Campaign"..cpnID, "PlayerSupportArmyID")
+			GLOBALS.CampaignData.AISupportArmyID = get_local_saved_data("Campaign"..cpnID, "AISupportArmyID")
+			GLOBALS.CampaignData.PlayerArmyCombinedStrength = get_local_saved_data("Campaign"..cpnID, "PlayerArmyCombinedStrength")
+			GLOBALS.CampaignData.AIArmyCombinedStrength = get_local_saved_data("Campaign"..cpnID, "AIArmyCombinedStrength")
+			Command:SetGameValue("SavedTimeLimit",get_local_saved_data("Campaign"..cpnID, "BattleTimer"))
+			GLOBALS.NoCityClickers = true
+			Interface:AddTimedEvent(function()
+				MenuCommonFunctions.TimedLoadScenario("Campaign"..cpnID..".dofsav", nil, 3)
+			end, {}, 1)
+		else
+			SetGameMode("CPN-Map")
+			GLOBALS.NoCityClickers = true
+			MenuCommonFunctions.TimedLoadScenario("Levels/Campaign Map.dofscn", nil, 3, nil)
+		end
+	end
+	
+	local function OnMouseOver(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnMouseOver is called")
+		
+		if Self and Self.Data and Self.Data.Portrait and Self.Data.HasBow then
+			local Anim = 37 + Interface:Random(3) -- Bow Animation
+			
+			Self.Data.Portrait.AnimationIndex = Anim		
+		end
+	end
+	
+	local function OnMouseOut(Self,Info)
+		--Interface:DebugOutput("PortraitButton: OnMouseOut is called")
+		
+		if Self and Self.Data and Self.Data.Portrait then
+			local Anim = Self.Data.Anim or Interface:Random(4)+1
+			
+			Self.Data.Portrait.AnimationIndex = Anim
+		end
+	end
+	
+	
+	local NationData = {
+		["England"] = {Advisor="Advisor-England", Texture=1, Name=GetString("nation_england_name"), Desc=GetString("nation_england_desc"), HasBow=true},
+		["France"] = {Advisor="Advisor-France", Texture=1, Name=GetString("nation_france_name"), Desc=GetString("nation_france_desc"), HasBow=true},
+		["Spain"] = {Advisor="Advisor-Spain", Texture=1, Name=GetString("nation_spain_name"), Desc=GetString("nation_spain_desc"), HasBow=true},
+		["HRE"] = {Advisor="Advisor-HRE", Texture=1, Name=GetString("nation_hre_name"), Desc=GetString("nation_hre_desc"), HasBow=true},
+		["Ireland"] = {Advisor="Advisor-Ireland", Texture=1, Name=GetString("nation_ireland_name"), Desc=GetString("nation_ireland_desc"), HasBow=true},
+		["Scotland"] = {Advisor="Advisor-Scotland", Texture=1, Name=GetString("nation_scotland_name"), Desc=GetString("nation_scotland_desc"), HasBow=true},
+		["Burgundy"] = {Advisor="Advisor-Burgundy", Texture=1, Name=GetString("nation_burgundy_name"), Desc=GetString("nation_burgundy_desc"), HasBow=true},
+		["Austria"] = {Advisor="Advisor-Austria", Texture=1, Name=GetString("nation_austria_name"), Desc=GetString("nation_austria_desc"), HasBow=true},
+		["Bohemia"] = {Advisor="Advisor-Bohemia", Texture=1, Name=GetString("nation_bohemia_name"), Desc=GetString("nation_bohemia_desc"), HasBow=true},
+		["Papacy"] = {Advisor="Advisor-Papacy", Texture=1, Name=GetString("nation_papacy_name"), Desc=GetString("nation_papacy_desc"), HasBow=true},
+		["Venice"] = {Advisor="Advisor-Venice", Texture=1, Name=GetString("nation_venice_name"), Desc=GetString("nation_venice_desc"), HasBow=true},
+		["Aragon"] = {Advisor="Advisor-Aragon", Texture=1, Name=GetString("nation_aragon_name"), Desc=GetString("nation_aragon_desc"), HasBow=true},
+		["Portugal"] = {Advisor="Advisor-Portugal", Texture=1, Name=GetString("nation_portugal_name"), Desc=GetString("nation_portugal_desc"), HasBow=true},
+		["Granada"] = {Advisor="Advisor-Granada", Texture=1, Name=GetString("nation_granada_name"), Desc=GetString("nation_granada_desc"), HasBow=true},
+		["Denmark"] = {Advisor="Advisor-Denmark", Texture=1, Name=GetString("nation_denmark_name"), Desc=GetString("nation_denmark_desc"), HasBow=true},
+		["Poland"] = {Advisor="Advisor-Poland", Texture=1, Name=GetString("nation_poland_name"), Desc=GetString("nation_poland_desc"), HasBow=true},
+		["Sweden"] = {Advisor="Advisor-Sweden", Texture=1, Name=GetString("nation_sweden_name"), Desc=GetString("nation_sweden_desc"), HasBow=true},
+		["Teutonic"] = {Advisor="Advisor-Teutonic", Texture=1, Name=GetString("nation_teutonic_name"), Desc=GetString("nation_teutonic_desc"), HasBow=true},
+		["Hungary"] = {Advisor="Advisor-Hungary", Texture=1, Name=GetString("nation_hungary_name"), Desc=GetString("nation_hungary_desc"), HasBow=true},
+		["Lithuania"] = {Advisor="Advisor-Lithuania", Texture=1, Name=GetString("nation_lithuania_name"), Desc=GetString("nation_lithuania_desc"), HasBow=true},
+		["Serbia"] = {Advisor="Advisor-Serbia", Texture=1, Name=GetString("nation_serbia_name"), Desc=GetString("nation_serbia_desc"), HasBow=true},
+		["Bulgaria"] = {Advisor="Advisor-Bulgaria", Texture=1, Name=GetString("nation_bulgaria_name"), Desc=GetString("nation_bulgaria_desc"), HasBow=true},
+		["Wallachia"] = {Advisor="Advisor-Wallachia", Texture=1, Name=GetString("nation_wallachia_name"), Desc=GetString("nation_wallachia_desc"), HasBow=true},
+		["Galicia"] = {Advisor="Advisor-Galicia", Texture=1, Name=GetString("nation_galicia_name"), Desc=GetString("nation_galicia_desc"), HasBow=true},
+		["Golden"] = {Advisor="Advisor-Golden", Texture=1, Name=GetString("nation_golden_name"), Desc=GetString("nation_golden_desc"), HasBow=true},
+		["Novgorod"] = {Advisor="Advisor-Novgorod", Texture=1, Name=GetString("nation_novgorod_name"), Desc=GetString("nation_novgorod_desc"), HasBow=true},
+		["Smolensk"] = {Advisor="Advisor-Smolensk", Texture=1, Name=GetString("nation_smolensk_name"), Desc=GetString("nation_smolensk_desc"), HasBow=true},
+		["Chernigov"] = {Advisor="Advisor-Chernigov", Texture=1, Name=GetString("nation_chernigov_name"), Desc=GetString("nation_chernigov_desc"), HasBow=true},
+		["Pereyaslavl"] = {Advisor="Advisor-Pereyaslavl", Texture=1, Name=GetString("nation_pereyaslavl_name"), Desc=GetString("nation_pereyaslavl_desc"), HasBow=true},
+		["Kiev"] = {Advisor="Advisor-Kiev", Texture=1, Name=GetString("nation_kiev_name"), Desc=GetString("nation_kiev_desc"), HasBow=true},
+		["Moskovy"] = {Advisor="Advisor-Moskovy", Texture=1, Name=GetString("nation_moskovy_name"), Desc=GetString("nation_moskovy_desc"), HasBow=true},
+		["Ryazan"] = {Advisor="Advisor-Ryazan", Texture=1, Name=GetString("nation_ryazan_name"), Desc=GetString("nation_ryazan_desc"), HasBow=true},
+		["Tver"] = {Advisor="Advisor-Tver", Texture=1, Name=GetString("nation_tver_name"), Desc=GetString("nation_tver_desc"), HasBow=true},
+		["Rostov"] = {Advisor="Advisor-Rostov", Texture=1, Name=GetString("nation_rostov_name"), Desc=GetString("nation_rostov_desc"), HasBow=true},
+		["Beloozero"] = {Advisor="Advisor-Beloozero", Texture=1, Name=GetString("nation_beloozero_name"), Desc=GetString("nation_beloozero_desc"), HasBow=true},
+		["Moldavia"] = {Advisor="Advisor-Moldavia", Texture=1, Name=GetString("nation_moldavia_name"), Desc=GetString("nation_moldavia_desc"), HasBow=true},
+		["Marinids"] = {Advisor="Advisor-Marinids", Texture=1, Name=GetString("nation_marinids_name"), Desc=GetString("nation_marinids_desc"), HasBow=true},
+		["Zayyanids"] = {Advisor="Advisor-Zayyanids", Texture=1, Name=GetString("nation_zayyanids_name"), Desc=GetString("nation_zayyanids_desc"), HasBow=true},
+		["Hafsids"] = {Advisor="Advisor-Hafsids", Texture=1, Name=GetString("nation_hafsids_name"), Desc=GetString("nation_hafsids_desc"), HasBow=true},
+		["Mamluk"] = {Advisor="Advisor-Mamluk", Texture=1, Name=GetString("nation_mamluk_name"), Desc=GetString("nation_mamluk_desc"), HasBow=true},
+		["Byzantine"] = {Advisor="Advisor-Byzantine", Texture=1, Name=GetString("nation_byzantine_name"), Desc=GetString("nation_byzantine_desc"), HasBow=true},
+		["Ottoman"] = {Advisor="Advisor-Ottoman", Texture=1, Name=GetString("nation_ottoman_name"), Desc=GetString("nation_ottoman_desc"), HasBow=true},
+		["Cyprus"] = {Advisor="Advisor-Cyprus", Texture=1, Name=GetString("nation_cyprus_name"), Desc=GetString("nation_cyprus_desc"), HasBow=true},
+		["Anatolian"] = {Advisor="Advisor-Anatolian", Texture=1, Name=GetString("nation_anatolian_name"), Desc=GetString("nation_anatolian_desc"), HasBow=true},
+		["StJohn"] = {Advisor="Advisor-Nation", Texture=1, Name=GetString("nation_stjohn_name"), Desc=GetString("nation_stjohn_desc"), HasBow=true},
+		["Naples"] = {Advisor="Advisor-Naples", Texture=1, Name=GetString("nation_naples_name"), Desc=GetString("nation_naples_desc"), HasBow=true},
+		["Sicily"] = {Advisor="Advisor-Sicily", Texture=1, Name=GetString("nation_sicily_name"), Desc=GetString("nation_sicily_desc"), HasBow=true},
+		["Genoa"] = {Advisor="Advisor-Genoa", Texture=1, Name=GetString("nation_genoa_name"), Desc=GetString("nation_genoa_desc"), HasBow=true},		
+	}
+			
+	local size = math.round(GLOBALS.Scale * 320)
+	local margin = math.round(GLOBALS.Scale * 16)
+	local cols = 5
+	local rows = 2
+	local xBase = (Interface:GetScreenWidth() - (cols*size) - ((cols-1)*margin))/2
+	local yBase = (Interface:GetScreenHeight() - (rows*size) - ((rows-1)*margin))/2
+	local IconSize = math.round(GLOBALS.Scale * 64)
+	
+	for cID=1,9 do
+		--set_local_saved_data("Campaign"..cID,"ForceLoad",true)
+	end
+	for row=1,rows do
+		for col=1,cols do
+			local cpnID = col + ((row-1)*cols)
+			local nation = get_local_saved_data("Campaign"..cpnID,"Nation") or nil
+			
+			local xPos = xBase + ((col-1)*(size+margin))
+			local yPos = yBase + ((row-1)*(size+margin))
+			if not nation or not NationData[nation] then
+				local window = GUIManager:CreateWindow(
+					xPos,yPos,
+					RelAlign.ToLeft,RelAlign.ToTop,70,
+					size,size,
+					{},
+					1,1,1,1,
+					1,1,1,1,
+					false,false,
+					"",
+					1,1,1,1,
+					buttonFont,
+					nil,nil,nil,nil,
+					nil
+				)
+	
+				local artPath = "Art/Interface/"
+				window.InteriorTexture={artPath.."MessageBoxBkg",0,0,256,128,true}
+				window.TopEdgeTexture={artPath.."MessageBoxBrdHorz",0,0,128,6}
+				window.BottomEdgeTexture={artPath.."MessageBoxBrdHorz",0,6,128,12}
+				window.LeftEdgeTexture={artPath.."MessageBoxBrdVert",0,0,6,128}
+				window.RightEdgeTexture={artPath.."MessageBoxBrdVert",6,0,12,128}
+				window.TopLeftCornerTexture={artPath.."MessageBoxCrn",0,0,16,16}
+				window.TopRightCornerTexture={artPath.."MessageBoxCrn",16,0,32,16}
+				window.BottomLeftCornerTexture={artPath.."MessageBoxCrn",0,16,16,32}
+				window.BottomRightCornerTexture={artPath.."MessageBoxCrn",16,16,32,32}
+				
+				window:CreateButton(
+					0,0,
+					RelAlign.ToLeft,RelAlign.ToTop,3,
+					size,size,
+					true,
+					{},
+					{},
+					{},
+					{},
+					1,1,1,0,
+					GetString("button_new_game"),
+					GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],
+					RelAlign.ToCenter,
+					buttonFont,
+					OnClickNew,nil,nil,{CpnID=cpnID}
+				)
+				
+				this.PortraitButtons[table.count(this.PortraitButtons) + 1] = window
+			else
+				local month = get_local_saved_data("Campaign"..(cpnID or 0),"Month") or 9
+	
+				local year = get_local_saved_data("Campaign"..(cpnID or 0),"Year") or 1347
+				
+				local MonthYear = Shared.GetMonthText(month)..", "..year
+				local playerFaction = get_local_saved_data("Campaign"..(cpnID or 0), "Faction") or nil
+				local lordPortrait = NationData[nation].Advisor
+				local anim = Interface:Random(4)+1
+				local hasBow = true
+				if playerFaction then
+					lordPortrait = GLOBALS.Lords[nation] and GLOBALS.Lords[nation][number.from(string.right(playerFaction or "1",1))] and GLOBALS.Lords[nation][number.from(string.right(playerFaction or "1",1))].portrait or lordPortrait
+					anim = 1
+					hasBow = false
+				end
+				local portraitTable = {
+					Template = lordPortrait,
+					Mesh = 1,
+					Animation = anim,
+					Texture = 1,
+					Label = (NationData[nation].Name or ""),
+					Background = true,
+					Date=MonthYear,
+				}
+				
+				local window = GLOBALS.CreatePortrait(portraitTable, xPos, yPos, size, OnClickLoad, OnMouseOver, OnMouseOut, {Nation = nation, Anim = portraitTable.Animation, CpnID=cpnID, HasBow=hasBow})
+								
+				-- Delete Button
+				window:CreateButton(
+					IconSize,0,
+					RelAlign.ToRight,RelAlign.ToTop,5,
+					IconSize,IconSize,
+					true, 
+					{"Art/Interface/Btn_Trash",0,0,128,128}, -- enabled
+					{"Art/Interface/Btn_Trash",128,0,256,128}, -- clicked
+					{"Art/Interface/Btn_Trash",0,128,128,256}, -- mouseover
+					{"Art/Interface/Btn_Trash",128,128,256,256}, -- disabled
+					1,1,1,1,
+					"", 
+					GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+					RelAlign.ToCenter,
+					buttonFont,
+					DeleteButtonPushed,nil,nil,{CpnID=cpnID}
+				)
+				
+				if get_local_saved_data("Campaign"..(cpnID or 0), "Cheated") then
+					window:CreateStaticImage(
+						IconSize,IconSize,
+						RelAlign.ToRight,RelAlign.ToTop,5,
+						IconSize,IconSize,
+						{"Art/Icons/Diplomacy/Cease Fire_2",0,0,128,128},
+						1,1,1,1,
+						false, -- centre on origin
+						0
+					)
+				end
+				
+				local currency = math.ceil(get_local_saved_data("Campaign"..(cpnID or 0), "Currency") or 0)
+				local resSize = math.round(48 * GLOBALS.Scale)
+				window:CreateStaticImage(
+					0,0,
+					RelAlign.ToLeft,RelAlign.ToTop,1,
+					3*resSize,resSize,
+					{"Art/Interface/Men/Resources/Background",0,0,192,64},
+					1,1,1,1,
+					false, -- centre on origin
+					0
+				)
+				
+				local currencyText = Shared.ConvertNumberToText(currency)
+				
+				window:CreateButton(
+					0,0,
+					RelAlign.ToLeft,RelAlign.ToTop,2,
+					resSize,resSize,
+					true, 
+					{"Art/Interface/Men/Resources/Coin",0,0,64,64}, -- enabled
+					{"Art/Interface/Men/Resources/Coin",0,0,64,64}, -- clicked
+					{"Art/Interface/Men/Resources/Coin",0,0,64,64}, -- mouseover
+					{"Art/Interface/Men/Resources/Coin",0,0,64,64}, -- disabled
+					1,1,1,1,
+					""..currencyText, 
+					GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+					RelAlign.ToRight,
+					buttonFont,
+					nil,nil,nil,nil
+				)
+				
+				local BattleData = get_local_saved_data("Campaign"..(cpnID or 0), "BattleData") or nil
+				if BattleData and ScenarioExists("Campaign"..(cpnID or 0)..".dofsav") then
+					window:CreateButton(
+						0,2*IconSize,
+						RelAlign.ToLeft,RelAlign.ToBottom,1,
+						IconSize,IconSize,
+						true, 
+						{"Art/Icons/Diplomacy/At War_2",0,0,128,128}, -- enabled
+						{"Art/Icons/Diplomacy/At War_2",128,0,256,128}, -- clicked
+						{"Art/Icons/Diplomacy/At War_2",0,128,128,256}, -- mouseover
+						{"Art/Icons/Diplomacy/At War_2",128,128,256,256}, -- disabled
+						1,1,1,1,
+						"", 
+						GUICommons.TextColour[1],GUICommons.TextColour[2],GUICommons.TextColour[3],GUICommons.TextColour[4],	--1,1,1,1,
+						RelAlign.ToCenter,
+						buttonFont,
+						nil,nil,nil,{CpnID=cpnID}
+					)
+				end
+				this.PortraitButtons[table.count(this.PortraitButtons) + 1]	= window
+			end
+		end
+	end
+	
+	]]
+end
+
+
+function GLOBALS.CampaignSelectionWindow.Close(this)
+	if not this.Loaded then
+		return
+	end
+	this.Loaded=false
+	for pbw in (this.PortraitButtons or {}) do
+		if pbw.Close then
+			pbw:Close()
+		end
+	end
+	this.PortraitButtons = nil
+	if this.Window then
+		if this.Window.Close then
+			this.Window:Close()
+		end
+		this.Window=nil
+	end
+end
+
+
+GLOBALS.NewsWindow={}
+
+function GLOBALS.NewsWindow.SlideOn(this, instant)
+	if this.SlideState==true then return end
+	
+	this.SlideState = true
+	User_SetOnlineValue(18,0)
+	local time = instant and 0 or 1
+	this.Window:Move(this.Window.Width-(this.SlideWidth  or math.round(48 * GLOBALS.Scale)),0,time)
+end
+
+function GLOBALS.NewsWindow.SlideOff(this, instant)	
+	this.SlideState = false
+	User_SetOnlineValue(18,1)
+	local time = instant and 0 or 1
+	this.Window:Move(-this.Window.Width+(this.SlideWidth or math.round(48 * GLOBALS.Scale)),0,time)
+end
+
+function GLOBALS.NewsWindow.Open(this)
+	if this.Loaded or GLOBALS.OfflineMode then
+		return
+	end
+		
+	this.SlideState = true
+	this.SlideWidth = ChatWindow and ChatWindow.SlideWidth or math.round(48 * (GLOBALS.LoadingScale or GLOBALS.Scale))
+	if GLOBALS.News and table.is(GLOBALS.News) and table.count(GLOBALS.News)>0 then
+		local WindowWidth = math.round(512 * (GLOBALS.LoadingScale or GLOBALS.Scale))
+		local WindowHeight = math.round(384 * (GLOBALS.LoadingScale or GLOBALS.Scale))
+		local iconSize = math.round(32 * (GLOBALS.LoadingScale or GLOBALS.Scale))		
+		local margin = math.round(16 * (GLOBALS.LoadingScale or GLOBALS.Scale))
+		local slideWidth = this.SlideWidth
+		local newsFont = GLOBALS.Fonts[14]
+		local titleFont = GLOBALS.Fonts[18]
+		this.Window = GUIManager:CreateWindow(
+			WindowWidth,WindowHeight,
+			RelAlign.ToRight,RelAlign.ToBottom,32,
+			WindowWidth,WindowHeight,
+			{},
+			1,1,1,0,
+			1,1,1,0,
+			false,false,
+			"",
+			1,1,1,0,
+			titleFont,
+			nil,nil,nil,nil,nil
+		)
+		
+		-- Create Background
+		this.NewsBackground = this.Window:CreateStaticImage(
+			slideWidth,WindowHeight,
+			RelAlign.ToLeft,RelAlign.ToBottom,1,
+			WindowWidth-slideWidth,WindowHeight,
+			{"Art/Interface/News",0,0,1024,768},
+			1,1,1,1,	-- 1,1,1,0.9,
+			false,0
+		)
+		local y = 24
+		--[[
+		
+		-- Create Title
+		local title = " ~ "..GetString("news_title").." ~ "
+		local titleWidth = titleFont:GetTextWidth(title)
+		this.Title = this.Window:CreateStaticText(
+			0,y,RelAlign.ToCenter,RelAlign.ToTop,2,
+			titleWidth,title,
+			1,1,1,0.9,titleFont
+		)
+		
+		y = y + this.Title.Height + 24
+		
+		this.Title.ShadowText=true
+		]]
+		-- Create news panel
+		this.CurrentItem = 1
+
+		local headLine = ""..(GLOBALS.News[this.CurrentItem].Title or "")..""
+		this.HeadLine = this.Window:CreateStaticText(
+			margin+slideWidth,y,
+			RelAlign.ToLeft,RelAlign.ToTop,2,
+			WindowWidth-(2 * margin)-slideWidth,headLine,
+			0,0,0,GUICommons.TextColour[4],
+			titleFont
+		)
+		
+		y = y + this.HeadLine.Height + 36
+		
+	
+		local fontHeight = newsFont:GetTextHeight()
+		local newsAreaHeight = WindowHeight - slideWidth - y
+		local newsText = ""..(GLOBALS.News[this.CurrentItem].Body or "")
+		this.NewsMain=this.Window:CreateMultilineEdit( 
+			margin + slideWidth,y,
+			RelAlign.ToLeft,RelAlign.ToTop,3,
+			WindowWidth-(2*margin)-slideWidth,math.floor(newsAreaHeight/fontHeight),
+			0.7,0.7,0.7,0,
+			0.2,0.2,0.2,0,
+			0.5,0.5,0.5,1,
+			newsText,
+			0,0,0,GUICommons.TextColour[4],
+			newsFont
+		)
+		this.NewsMain.InputLocked=true
+		this.NewsMain.ShadowText=true
+		
+		this.OnGotFocus = function()
+			GLOBALS.NewsWindow.Rotate = false
+		end
+		
+		-- Next/Previous buttons
+		if GLOBALS.NewsItems and GLOBALS.NewsItems > 1 then
+			local function OnClickNext(self,info)
+				GLOBALS.NewsWindow.CurrentItem = GLOBALS.NewsWindow.CurrentItem==GLOBALS.NewsItems and 1 or GLOBALS.NewsWindow.CurrentItem + 1
+				GLOBALS.NewsWindow:ChangeNews(GLOBALS.NewsWindow.CurrentItem)
+				GLOBALS.NewsWindow.Rotate = false
+			end
+			local function OnClickPrevious(self,info)
+				GLOBALS.NewsWindow.CurrentItem = GLOBALS.NewsWindow.CurrentItem==1 and GLOBALS.NewsItems or GLOBALS.NewsWindow.CurrentItem - 1
+				GLOBALS.NewsWindow:ChangeNews(GLOBALS.NewsWindow.CurrentItem)
+				GLOBALS.NewsWindow.Rotate = false
+			end
+			local NextButton = this.Window:CreateButton(
+				math.round(24 * GLOBALS.Scale)+(slideWidth/2),slideWidth,RelAlign.ToCenter,RelAlign.ToBottom,2,
+				iconSize,iconSize,
+				true,
+				{"Art/Interface/StandardButton",0, 0,73,21},
+				{"Art/Interface/StandardButton",0,21,73,42},
+				{"Art/Interface/StandardButton",0,21,73,42},
+				{"Art/Interface/StandardButton",0,42,73,63},
+				0.25,0.125,0,1,
+				">",
+				0,0,0,GUICommons.TextColour[4],
+				RelAlign.ToCenter,
+				newsFont,
+				OnClickNext,
+				nil,
+				nil,
+				nil
+			)
+			NextButton.ShadowText=true
+			
+			local PreviousButton = this.Window:CreateButton(
+				math.round(-24 * GLOBALS.Scale)+(slideWidth/2),slideWidth,RelAlign.ToCenter,RelAlign.ToBottom,2,
+				iconSize,iconSize,
+				true,
+				{"Art/Interface/StandardButton",0, 0,73,21},
+				{"Art/Interface/StandardButton",0,21,73,42},
+				{"Art/Interface/StandardButton",0,21,73,42},
+				{"Art/Interface/StandardButton",0,42,73,63},
+				0.25,0.125,0,1,
+				"<",
+				0,0,0,GUICommons.TextColour[4],
+				RelAlign.ToCenter,
+				newsFont,
+				OnClickPrevious,
+				nil,
+				nil,
+				nil
+			)
+			PreviousButton.ShadowText=true
+			
+			local function OnSlidePressed(self)
+				--Interface:DebugOutput("Slide Pressed")
+				if this.SlideState == false then
+					--Interface:DebugOutput("Slide false")
+					this:SlideOn()
+				else
+					--Interface:DebugOutput("Slide true")
+					this:SlideOff()
+				end
+			end
+			
+			this.artPath = "Art/interface/Chat/"
+			this.SlideButton = this.Window:CreateButton(
+				0,25,
+				RelAlign.ToLeft,RelAlign.ToTop,2,
+				slideWidth,ChatWindow.SlideHeight or math.round(300 * GLOBALS.Scale),
+				true,
+				{this.artPath.."SlideNews",96, 0,0,600},
+				{this.artPath.."SlideNews",192,0,96,600},
+				{this.artPath.."SlideNews",288,0,192,600},
+				{this.artPath.."SlideNews",96,0,0,600},
+				1,1,1,1,"N\nE\nW\nS",
+				0,0,0,GUICommons.TextColour[4],
+				RelAlign.ToCenter,
+				GLOBALS.VerticalFont,
+				OnSlidePressed,nil,nil,nil)
+			end
+		
+		this.Loaded = true
+		
+		if GLOBALS.NewsRotation and GLOBALS.NewsRotation>0 and table.count(GLOBALS.News)>1 then			
+			GLOBALS.NewsWindow.Rotate = true
+			Interface:AddTimedEvent(function()
+				GLOBALS.NewsWindow:RotateNews()
+			end, nil, GLOBALS.NewsRotation)
+		end
+		
+		this.Window.Visible = false
+	end
+	Interface:AddTimedEvent(function()
+		if GLOBALS.NewsWindow and GLOBALS.NewsWindow.Window and GLOBALS.NewsWindow.Loaded then
+			local hideNews = (User_GetOnlineValue(18) or 0) == 1 or false
+			GLOBALS.NewsWindow:SlideOff(true)
+			if not hideNews then
+				GLOBALS.NewsWindow:SlideOn()
+			end
+			GLOBALS.NewsWindow.Window.Visible = true
+		end
+	end, nil, 0.25)
+end
+
+function GLOBALS.NewsWindow.Close(this)
+	if this.Loaded == false then return end
+	if this.Window then
+		if this.Window.Close then
+			this.Window:Close()
+		end
+		this.Window = nil
+	end
+	this.Loaded = false
+end
+
+function GLOBALS.NewsWindow.ChangeNews(this,item)
+	if this.Loaded then
+		this.CurrentItem = item or this.CurrentItem or 1
+		if GLOBALS.News and GLOBALS.News[this.CurrentItem] and this.HeadLine and this.HeadLine.Text then
+			this.HeadLine.Text = ""..(GLOBALS.News[this.CurrentItem].Title or "")
+			if this.NewsMain and this.NewsMain.Text then
+				this.NewsMain.Text = ""..(GLOBALS.News[this.CurrentItem].Body or "")
+			end
+		end
+	end
+end
+
+function GLOBALS.NewsWindow.RotateNews(this)
+	if this.Loaded and this.Rotate then
+		this.CurrentItem = this.CurrentItem==GLOBALS.NewsItems and 1 or this.CurrentItem + 1
+		this:ChangeNews(this.CurrentItem)
+		
+		if GLOBALS.NewsRotation and GLOBALS.NewsRotation>0 then
+			Interface:AddTimedEvent(function()
+				GLOBALS.NewsWindow:RotateNews()
+			end, nil, GLOBALS.NewsRotation)
+		end
+	end
+end
